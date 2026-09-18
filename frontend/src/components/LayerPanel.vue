@@ -8,14 +8,14 @@ const emit = defineEmits<{ layer: [id: string, visible: boolean]; opacity: [valu
 const store = useWorkspace();
 const visible = ref<Record<string, boolean>>({});
 const opacity = ref(75);
-const buildingOpacity = ref(20);
+const buildingOpacity = ref(88);
 const ugc = ref(true);
 const shadows = ref(false);
 const transparentTrees = ref(false);
 const variableIcons: Record<string, string> = { utci: 'temperature', air_temperature: 'temperature', relative_humidity: 'drop', wind_speed: 'wind', dew_point: 'water', solar_radiation: 'sun', net_shortwave_background: 'sun', local_downwelling_shortwave: 'sun' };
 const layerIcons: Record<string, string> = { buildings: 'building', canopy: 'tree', water: 'water', green: 'layers', terrain: 'layers', roads: 'next', poi: 'pin' };
 const activeLegend = computed(() => store.activeItem?.assets.length ? store.activeItem.legend : null);
-watch(() => store.layers, layers => { visible.value = Object.fromEntries(layers.map(layer => [layer.layer_id, layer.default_visible])); ugc.value = true; shadows.value = false; transparentTrees.value = false; opacity.value = 75; buildingOpacity.value = 20; }, { immediate: true });
+watch(() => store.layers, layers => { visible.value = Object.fromEntries(layers.map(layer => [layer.layer_id, layer.default_visible])); ugc.value = true; shadows.value = false; transparentTrees.value = false; opacity.value = 75; buildingOpacity.value = 88; }, { immediate: true });
 defineExpose({ visible: () => [...store.layers.filter(layer => visible.value[layer.layer_id]).map(layer => layer.name), ...(ugc.value ? ['公开体感'] : []), ...(shadows.value ? ['几何阴影'] : [])] });
 </script>
 <template>

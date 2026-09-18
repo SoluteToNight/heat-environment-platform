@@ -43,8 +43,8 @@ const filteredPoints = computed(() => {
   return points.value.filter(p => p.district === districtFilter.value);
 });
 
-const controlPointsCount = computed(() => points.value.filter(p => p.type === 'control').length || 110);
-const testPointsCount = computed(() => points.value.filter(p => p.type === 'test').length || 16);
+const controlPointsCount = computed(() => points.value.filter(p => p.type === 'control').length || 126);
+const testPointsCount = computed(() => points.value.filter(p => p.type === 'test').length || 18);
 
 // Load quota and points on open
 watch(() => props.open, async (val) => {

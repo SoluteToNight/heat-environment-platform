@@ -47,6 +47,11 @@ const exportOpen = ref(false);
 const dataInfoOpen = ref(false);
 const forecastOpen = ref(false);
 
+function handleOpenForecastFromInfo() {
+  dataInfoOpen.value = false;
+  forecastOpen.value = true;
+}
+
 // Map ref
 const mapRef = ref<InstanceType<typeof MapScene>>();
 
@@ -229,18 +234,15 @@ async function handleCaptureMap() {
       <button
         v-if="store.view"
         type="button"
-        class="hidden xl:flex items-center gap-2 rounded-full border border-line bg-canvas px-3 py-1 text-xs hover:bg-white hover:shadow-2xs transition cursor-pointer"
-        title="点击查看气象平差、110 控制点与 16 盲测点精度审计"
-        @click="forecastOpen = true"
+        class="hidden xl:flex items-center gap-2 rounded-full border border-line bg-canvas px-3.5 py-1 text-xs hover:bg-white hover:shadow-2xs transition cursor-pointer"
+        title="点击查看数据来源、计算方法与 144 点空间平差审计"
+        @click="dataInfoOpen = true"
       >
         <span class="size-2 rounded-full" :class="store.view.mode === 'forecast' ? 'bg-amber-500' : 'bg-accent'" />
         <span class="font-medium">{{ modeNames[store.view.mode] }}</span>
-        <span class="max-w-44 truncate text-muted" :title="store.activeItem?.provenance.source">· {{ store.activeItem?.provenance.source.split('；')[0] || '来源待加载' }}</span>
+        <span class="text-muted">· {{ store.view.mode === 'forecast' ? '和风天气 48h 数值同化' : (store.activeItem?.provenance.source.split('（')[0].split('(')[0] || '数据说明') }}</span>
         <span v-if="store.activeItem?.freshness === 'stale'" class="rounded bg-amber-100 px-1 text-[10px] text-amber-800">
           已过期
-        </span>
-        <span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
-          平差审计
         </span>
       </button>
 
@@ -459,6 +461,7 @@ async function handleCaptureMap() {
     <DataInfoModal
       :open="dataInfoOpen"
       @close="dataInfoOpen = false"
+      @open-forecast="handleOpenForecastFromInfo"
     />
 
     <ForecastModal

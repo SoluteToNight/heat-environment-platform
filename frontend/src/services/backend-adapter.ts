@@ -155,7 +155,12 @@ export function normalizeBackendResponse(path: string, data: unknown, apiBase: s
     const variable = url.searchParams.get('variables') || url.searchParams.get('variable') || 'air_temperature';
     return { view_id: result.view_id, variable, unit: views.get(result.view_id)?.items.find(item => item.variable === variable)?.unit || '', points: result.steps.map(step => ({ time: step.time, value: step.values[variable] ?? null })) };
   }
-  if (pathname.endsWith('/places') && Array.isArray(data)) return page(data.map((place: { id: string; title: string; poi_type?: string; lon: number; lat: number }) => ({ place_id: place.id, name: place.title, description: place.poi_type || '', location: { type: 'Point', coordinates: [place.lon, place.lat] } })));
-  if (pathname === '/check-ins' && Array.isArray(data)) return page(data);
+  if (pathname === '/check-ins' && Array.isArray(data)) {
+    return page(data.map((item: any) => ({
+      ...item,
+      check_in_id: item.check_in_id || item.id,
+      alias: item.alias || `市民 (${String(item.id || '').slice(-4)})`,
+    })));
+  }
   return data;
 }

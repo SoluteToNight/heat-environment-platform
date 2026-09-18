@@ -23,6 +23,8 @@ async function mount() {
     const next = await SceneAdapter.create(container.value, store.scene, store.layers, { pick: items => emit('pick', items), viewport: bbox => void store.refreshRecords(bbox), error: message => { failed.value = message; }, layerStatus: (id, status) => emit('layerStatus', id, status) });
     if (ticket !== generation) { next.destroy(); return; }
     adapter = next;
+    (window as any).__sceneAdapter = next;
+    (window as any).__cesiumViewer = (next as any).viewer;
     adapter.setRecords(store.records);
     store.bindRenderer((view, variable) => next.prepare(view, variable));
   } catch (error) { if (ticket === generation) failed.value = error instanceof Error ? error.message : '无法启动三维地图'; }

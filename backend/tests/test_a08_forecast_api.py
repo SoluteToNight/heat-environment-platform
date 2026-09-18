@@ -22,12 +22,12 @@ def test_get_forecast_quota():
 
 
 def test_get_forecast_points():
-    """Test /api/v1/forecast/points returns all 100 points with series."""
+    """Test /api/v1/forecast/points returns all points with series."""
     resp = client.get("/api/v1/forecast/points")
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert data["total_points"] == 126
-    assert len(data["points"]) == 126
+    assert data["total_points"] == 144
+    assert len(data["points"]) == 144
     # Check sample control point
     c01 = next(p for p in data["points"] if p["id"] == "C01")
     assert c01["name"] == "人民广场"
@@ -37,7 +37,7 @@ def test_get_forecast_points():
 
 
 def test_get_fused_grid():
-    """Test /api/v1/forecast/grid returns 500m mesh and audit metrics."""
+    """Test /api/v1/forecast/grid returns mesh and audit metrics."""
     resp = client.get("/api/v1/forecast/grid?hour=0&variable=temperature_2m&smooth=0.08")
     assert resp.status_code == 200
     data = resp.json()["data"]
@@ -49,7 +49,7 @@ def test_get_fused_grid():
     assert "audit_metrics" in data
     assert data["audit_metrics"]["test_mae"] > 0
     assert data["audit_metrics"]["test_rmse"] > 0
-    assert len(data["audit_metrics"]["test_details"]) == 16
+    assert len(data["audit_metrics"]["test_details"]) == 18
 
 
 def test_get_audit_report():
@@ -58,5 +58,5 @@ def test_get_audit_report():
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["hour_index"] == 3
-    assert data["audit_metrics"]["test_points_count"] == 16
-    assert data["control_points_summary"]["total_count"] == 110
+    assert data["audit_metrics"]["test_points_count"] == 18
+    assert data["control_points_summary"]["total_count"] == 126

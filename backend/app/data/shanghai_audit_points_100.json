@@ -1,9 +1,9 @@
 {
-  "version": "6.0",
+  "version": "v7.0",
   "generated_at": "2026-09-18T08:50:00+08:00",
-  "total_points": 135,
-  "control_points_count": 118,
-  "test_points_count": 17,
+  "total_points": 144,
+  "control_points_count": 126,
+  "test_points_count": 18,
   "cadence": "daily_once",
   "estimated_10d_requests": 1350,
   "quota_limit": 5000,
@@ -1072,6 +1072,78 @@
       "tag": "崇明东部平原生态腹地，控制现代农业与水网聚落热环境"
     },
     {
+      "id": "C119",
+      "name": "浦东·惠南核心城区",
+      "district": "浦东新区",
+      "type": "control",
+      "lon": 121.758,
+      "lat": 31.052,
+      "tag": "原南汇老城核心，填补祝桥与临港之间28km空白"
+    },
+    {
+      "id": "C120",
+      "name": "长兴·西北马家港",
+      "district": "崇明区",
+      "type": "control",
+      "lon": 121.655,
+      "lat": 31.428,
+      "tag": "长兴岛西北端马家港客运码头与沿江水陆边界把守"
+    },
+    {
+      "id": "C121",
+      "name": "长兴·凤凰镇核心",
+      "district": "崇明区",
+      "type": "control",
+      "lon": 121.728,
+      "lat": 31.385,
+      "tag": "长兴岛中段凤凰镇城镇聚落核心区"
+    },
+    {
+      "id": "C122",
+      "name": "长兴·江南造船基地",
+      "district": "崇明区",
+      "type": "control",
+      "lon": 121.782,
+      "lat": 31.345,
+      "tag": "长兴岛东南段江南造船基地与长江南支岸线"
+    },
+    {
+      "id": "C123",
+      "name": "横沙·西码头风道",
+      "district": "崇明区",
+      "type": "control",
+      "lon": 121.825,
+      "lat": 31.352,
+      "tag": "横沙岛西端客运码头与长江口水汽廊道"
+    },
+    {
+      "id": "C124",
+      "name": "横沙·新民镇中心",
+      "district": "崇明区",
+      "type": "control",
+      "lon": 121.875,
+      "lat": 31.338,
+      "tag": "横沙岛腹地新民镇核心生活服务区"
+    },
+    {
+      "id": "C125",
+      "name": "横沙·东滩湿地岸",
+      "district": "崇明区",
+      "type": "control",
+      "lon": 121.948,
+      "lat": 31.322,
+      "tag": "横沙岛东端迎海极缘天然水陆交界"
+    },
+    {
+      "id": "C126",
+      "name": "松江·佘山度假区核心",
+      "district": "松江区",
+      "type": "control",
+      "lon": 121.22,
+      "lat": 31.135,
+      "tag": "填补九亭与朱家角之间25km大空白，监控佘山林地微气候"
+    },
+    {
       "id": "T01",
       "name": "老西门复兴东路",
       "district": "黄浦区",
@@ -1223,6 +1295,15 @@
       "lon": 121.285,
       "lat": 31.725,
       "tag": "验证崇明岛西部开阔生态水体与森林绿岛的冷岛插值精度"
+    },
+    {
+      "id": "T18",
+      "name": "长兴岛郊野公园生态水系",
+      "district": "崇明区",
+      "type": "test",
+      "lon": 121.685,
+      "lat": 31.405,
+      "tag": "长兴岛核心国家级郊野公园，独立检验海岛湿地冷岛效应"
     }
   ]
 }

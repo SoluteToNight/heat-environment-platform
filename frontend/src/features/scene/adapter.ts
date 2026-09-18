@@ -61,12 +61,17 @@ export class SceneAdapter {
   private terrainProvider?: CesiumTypes.TerrainProvider;
   private buildingEntities = new Map<string, CesiumTypes.Entity>();
   private buildingAccessTime = new Map<string, number>();
+  private buildingCenters = new Map<string, [number, number]>();
+  private rasterSampler: { data: Uint8ClampedArray; width: number; height: number; bbox: [number, number, number, number] } | null = null;
+  private activeLegendColors: string[] = [];
   private buildingApiUrl?: string;
   private buildingUpdateTimer?: ReturnType<typeof setTimeout>;
   private buildingAbortController?: AbortController;
   private buildingVisible = true;
-  private buildingOpacity = 0.20;
+  private buildingOpacity = 0.88;
   private clusterListenerAttached = false;
+  private lastFetchedBbox: [number, number, number, number] | null = null;
+  private lastFetchedMinHeight: number | undefined = undefined;
   static async create(element: HTMLElement, config: Scene, layers: Layer[], callbacks: MapCallbacks) {
     const [cesium, token] = await Promise.all([loadRuntime(), fetchIonToken()]);
     if (token) {
@@ -163,6 +168,74 @@ export class SceneAdapter {
     return adapter;
   }
   private color(value: string, alpha = 1) { return this.cesium.Color.fromCssColorString(value).withAlpha(alpha); }
+  private async loadRasterImage(url: string, bbox: [number, number, number, number]) {
+    try {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+      return await new Promise<{ data: Uint8ClampedArray; width: number; height: number; bbox: [number, number, number, number] } | null>((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width || 512;
+            canvas.height = img.naturalHeight || img.height || 512;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (!ctx) { resolve(null); return; }
+            ctx.drawImage(img, 0, 0);
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            resolve({
+              data: imgData.data,
+              width: canvas.width,
+              height: canvas.height,
+              bbox,
+            });
+          } catch {
+            resolve(null);
+          }
+        };
+        img.onerror = () => resolve(null);
+        img.src = url;
+      });
+    } catch {
+      return null;
+    }
+  }
+  private getBuildingColorAt(lon: number, lat: number): CesiumTypes.Color {
+    const cesium = this.cesium;
+    if (this.rasterSampler) {
+      const { data, width, height, bbox } = this.rasterSampler;
+      const [west, south, east, north] = bbox;
+      const u = (lon - west) / (east - west);
+      const v = (north - lat) / (north - south);
+      if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
+        const px = Math.min(width - 1, Math.max(0, Math.floor(u * width)));
+        const py = Math.min(height - 1, Math.max(0, Math.floor(v * height)));
+        const idx = (py * width + px) * 4;
+        const r = data[idx]!;
+        const g = data[idx + 1]!;
+        const b = data[idx + 2]!;
+        const a = data[idx + 3]!;
+        if (a > 30) {
+          return cesium.Color.fromBytes(r, g, b, Math.round(this.buildingOpacity * 255));
+        }
+      }
+    }
+    if (this.activeLegendColors.length > 0) {
+      const midColor = this.activeLegendColors[Math.floor(this.activeLegendColors.length / 2)]!;
+      return this.color(midColor, this.buildingOpacity);
+    }
+    return this.color('#f3ece0', this.buildingOpacity);
+  }
+  private updateBuildingColors() {
+    const cesium = this.cesium;
+    this.buildingEntities.forEach((entity, id) => {
+      const center = this.buildingCenters.get(id);
+      if (!center || !entity.polygon) return;
+      const color = this.getBuildingColorAt(center[0], center[1]);
+      entity.polygon.material = new cesium.ColorMaterialProperty(color);
+    });
+    this.render();
+  }
   private local(east: number, north: number, height = 0) {
     return this.cesium.Cartesian3.fromDegrees(121.488 + east / 95300, 31.2335 + north / 111000, height);
   }
@@ -310,6 +383,7 @@ export class SceneAdapter {
     const item = view.items.find(value => value.variable === variable);
     let source: CesiumTypes.CustomDataSource | CesiumTypes.ImageryLayer | null = null;
     const asset = item?.assets[0];
+    let nextSampler: { data: Uint8ClampedArray; width: number; height: number; bbox: [number, number, number, number] } | null = null;
     if (item?.availability === 'available' && asset) {
       if (asset.type === 'demo') {
         source = new cesium.CustomDataSource('environment');
@@ -325,6 +399,9 @@ export class SceneAdapter {
       } else if (asset.type === 'geojson' && asset.url) {
         source = await cesium.GeoJsonDataSource.load(asset.url, { clampToGround: true });
       } else if ((asset.type === 'image' || asset.type === 'xyz') && asset.url) {
+        if (asset.type === 'image' && asset.bbox) {
+          nextSampler = await this.loadRasterImage(asset.url, asset.bbox as [number, number, number, number]);
+        }
         const provider = asset.type === 'image' ? await cesium.SingleTileImageryProvider.fromUrl(asset.url, { rectangle: asset.bbox ? cesium.Rectangle.fromDegrees(...asset.bbox) : undefined }) : new cesium.UrlTemplateImageryProvider({ url: asset.url, minimumLevel: asset.minimum_level, maximumLevel: asset.maximum_level });
         source = new cesium.ImageryLayer(provider, { alpha: this.opacity, show: false });
         source.minificationFilter = cesium.TextureMinificationFilter.LINEAR;
@@ -352,6 +429,11 @@ export class SceneAdapter {
           void this.viewer.dataSources.add(prepared);
         }
         this.environment = prepared; committed = true;
+        this.rasterSampler = nextSampler;
+        if (item?.legend?.colors) {
+          this.activeLegendColors = [...item.legend.colors];
+        }
+        this.updateBuildingColors();
         this.viewer.clock.currentTime = cesium.JulianDate.fromIso8601(view.requested_time); this.render();
       },
       dispose: () => { if (!committed && !this.destroyed && prepared instanceof cesium.ImageryLayer) this.viewer.imageryLayers.remove(prepared, true); },
@@ -380,8 +462,71 @@ export class SceneAdapter {
       const coordinates: Coordinates = [cesium.Math.toDegrees(position.longitude), cesium.Math.toDegrees(position.latitude)];
       const items: MapPick[] = [];
       const seen = new Set<string>();
-      for (const picked of this.viewer.scene.drillPick(event.position, 5)) {
-        if (picked && typeof (picked as { getProperty?: (name: string) => unknown }).getProperty === 'function') {
+      const pickedList = this.viewer.scene.drillPick(event.position, 8);
+      for (const picked of pickedList) {
+        if (!picked) continue;
+        const pickId = (picked as any).id;
+        // 1. 若点击了 Cesium 聚类气泡：执行智能聚合拆分缩放与热点记录全量提取
+        if (pickId && (pickId.isCluster || Array.isArray(pickId) || (pickId.entities && Array.isArray(pickId.entities)))) {
+          const entities: CesiumTypes.Entity[] = pickId.entities || (Array.isArray(pickId) ? pickId : []);
+          if (entities.length > 0) {
+            const positions = entities
+              .map(e => e.position?.getValue(this.viewer.clock.currentTime))
+              .filter(Boolean) as CesiumTypes.Cartesian3[];
+
+            const clusterRecords: PublicCheckIn[] = [];
+            entities.forEach(ent => {
+              const rec = ent.properties?.record?.getValue?.(this.viewer.clock.currentTime) || ent.properties?.record;
+              if (rec) clusterRecords.push(rec);
+            });
+
+            if (positions.length > 0) {
+              const sphere = this.cesium.BoundingSphere.fromPoints(positions);
+              const camHeight = this.viewer.camera.positionCartographic.height;
+
+              // 若点群在地理空间上有分布且高度允许拆分，平滑飞向该聚合包围球实现自然拆分
+              if (sphere.radius > 25 && camHeight > sphere.radius * 2.2) {
+                const targetRange = Math.max(sphere.radius * 2.0, 500);
+                this.viewer.camera.flyToBoundingSphere(sphere, {
+                  duration: 0.65,
+                  offset: new this.cesium.HeadingPitchRange(
+                    this.viewer.camera.heading,
+                    this.cesium.Math.toRadians(-55),
+                    targetRange
+                  ),
+                });
+              } else if (camHeight > 600) {
+                // 近距离聚集点：微缩放拉近至街区
+                this.viewer.camera.flyToBoundingSphere(sphere, {
+                  duration: 0.5,
+                  offset: new this.cesium.HeadingPitchRange(
+                    this.viewer.camera.heading,
+                    this.cesium.Math.toRadians(-55),
+                    450
+                  ),
+                });
+              }
+            }
+
+            if (clusterRecords.length > 0) {
+              const firstRec = clusterRecords[0]!;
+              const pickItems: MapPick[] = clusterRecords.map(rec => ({
+                name: rec.alias || '市民体感记录',
+                coordinates: rec.location.coordinates,
+                record: rec,
+              }));
+              pickItems.push({
+                name: `聚合打卡热点 (${clusterRecords.length} 条记录)`,
+                coordinates: firstRec.location.coordinates,
+              });
+              this.callbacks.pick(pickItems);
+              this.select(firstRec.location.coordinates);
+              return;
+            }
+          }
+        }
+
+        if (typeof (picked as { getProperty?: (name: string) => unknown }).getProperty === 'function') {
           const tileFeature = picked as CesiumTypes.Cesium3DTileFeature;
           const name = (tileFeature.getProperty('name') as string) || (tileFeature.getProperty('cesium#estimatedHeight') ? `街区建筑 (${Math.round(Number(tileFeature.getProperty('cesium#estimatedHeight')))}m)` : '街区建筑');
           const height = Number(tileFeature.getProperty('cesium#estimatedHeight') || tileFeature.getProperty('height')) || undefined;
@@ -422,6 +567,10 @@ export class SceneAdapter {
       items.push({ name: '查询此处环境', coordinates });
       this.callbacks.pick(items);
     }, cesium.ScreenSpaceEventType.LEFT_CLICK);
+    this.viewer.camera.percentageChanged = 0.05;
+    this.removers.push(this.viewer.camera.changed.addEventListener(() => {
+      this.scheduleViewportBuildingsUpdate();
+    }));
     this.removers.push(this.viewer.camera.moveEnd.addEventListener(() => {
       const rectangle = this.viewer.camera.computeViewRectangle();
       if (!rectangle) return;
@@ -442,8 +591,11 @@ export class SceneAdapter {
     if (this.groups.has(id)) this.groups.get(id)!.show = visible;
     if (this.primitives.has(id)) this.primitives.get(id)!.show = visible;
     if (this.rasterLayers.has(id)) this.rasterLayers.get(id)!.show = visible;
-    if (id === 'terrain') this.viewer.terrainProvider = visible && this.terrainProvider ? this.terrainProvider : new this.cesium.EllipsoidTerrainProvider();
-    if (id === 'shadows') this.viewer.shadows = visible;
+    if (id === 'shadows') {
+      this.viewer.shadows = visible;
+      this.lastFetchedBbox = null;
+      void this.refreshViewportBuildings();
+    }
     this.render();
   }
   setOpacity(value: number) {
@@ -468,21 +620,14 @@ export class SceneAdapter {
   }
   setBuildingOpacity(value: number) {
     this.buildingOpacity = value;
-    const cesium = this.cesium;
-    const color = this.color('#ffffff', value);
-    this.buildingEntities.forEach(entity => {
-      if (entity.polygon) {
-        entity.polygon.material = new cesium.ColorMaterialProperty(color);
-      }
-    });
-    this.render();
+    this.updateBuildingColors();
   }
   setRecords(records: PublicCheckIn[]) {
     const group = this.group('ugc');
     group.entities.removeAll();
     group.clustering.enabled = true;
-    group.clustering.pixelRange = 50;
-    group.clustering.minimumClusterSize = 3;
+    group.clustering.pixelRange = 30;
+    group.clustering.minimumClusterSize = 2;
 
     if (!this.clusterListenerAttached) {
       this.clusterListenerAttached = true;
@@ -490,11 +635,14 @@ export class SceneAdapter {
         // 关闭 Cesium 默认简陋的无背景白字 label
         cluster.label.show = false;
         cluster.billboard.show = true;
-        cluster.billboard.id = cluster.label.id;
+        const count = clusteredEntities.length;
+        cluster.billboard.id = {
+          isCluster: true,
+          entities: clusteredEntities,
+          count,
+        };
         cluster.billboard.verticalOrigin = this.cesium.VerticalOrigin.CENTER;
         cluster.billboard.disableDepthTestDistance = Infinity;
-
-        const count = clusteredEntities.length;
         // 统计热感主导类型（暖色/冷绿色自适应光晕与底色）
         let warmCount = 0;
         clusteredEntities.forEach(ent => {
@@ -533,29 +681,122 @@ export class SceneAdapter {
       });
     }
 
+    // 针对网格脱敏后完全重合的同坐标点位，施加优雅的地面微距环形发散（Spiderfy）；
+    // 高空视角下因像素距离 < pixelRange 仍自动聚合为整球；近景街区视角下自动展开为整齐花瓣阵列，杜绝完全重合死板遮盖
+    const coordBuckets = new Map<string, PublicCheckIn[]>();
     records.forEach(record => {
-      const color = { cold: '#3b6e8c', cool: '#3d8b80', neutral: '#4e825a', warm: '#d97724', hot: '#c0392b' }[record.thermal_sensation];
-      const sensationChar = sensationNames[record.thermal_sensation].slice(-1);
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="50" viewBox="0 0 44 50">
-        <defs>
-          <filter id="p_shadow" x="-30%" y="-20%" width="160%" height="150%">
-            <feDropShadow dx="0" dy="2.5" stdDeviation="2.5" flood-color="#000000" flood-opacity="0.35"/>
-          </filter>
-        </defs>
-        <path d="M22 47 C14 36 6 28 6 18 A16 16 0 1 1 38 18 C38 28 30 36 22 47 Z" fill="${color}" stroke="#ffffff" stroke-width="2.5" filter="url(#p_shadow)"/>
-        <circle cx="22" cy="18" r="9.5" fill="#ffffff" fill-opacity="0.22"/>
-        <text x="22" y="23" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="13" font-weight="700" fill="#ffffff">${sensationChar}</text>
-      </svg>`;
-      group.entities.add({
-        position: this.cesium.Cartesian3.fromDegrees(...record.location.coordinates, 18),
-        properties: { record },
-        billboard: {
-          image: `data:image/svg+xml,${encodeURIComponent(svg)}`,
-          width: 34,
-          height: 38,
-          verticalOrigin: this.cesium.VerticalOrigin.BOTTOM,
-          disableDepthTestDistance: Infinity,
-        },
+      const key = `${record.location.coordinates[0].toFixed(5)},${record.location.coordinates[1].toFixed(5)}`;
+      if (!coordBuckets.has(key)) coordBuckets.set(key, []);
+      coordBuckets.get(key)!.push(record);
+    });
+
+    coordBuckets.forEach(bucket => {
+      const totalInSpot = bucket.length;
+      bucket.forEach((record, index) => {
+        let lon = record.location.coordinates[0];
+        let lat = record.location.coordinates[1];
+        if (totalInSpot > 1) {
+          const angle = (2 * Math.PI * index) / totalInSpot;
+          const radiusM = 22; // 22米地面半径（完全在200m网格内，中景视角即可清晰舒展分裂）
+          lon += (radiusM / (111320 * Math.cos(lat * Math.PI / 180))) * Math.cos(angle);
+          lat += (radiusM / 110540) * Math.sin(angle);
+        }
+
+        // 针对五级热感知，采用国际专业气象/体感高精矢量 Glyph 与明亮双色渐变，彻底杜绝单字截断（如“性”）
+        const sensationStyles = {
+          cold: {
+            gradStart: '#3b82f6',
+            gradEnd: '#1d4ed8',
+            label: '寒冷',
+            // 冰晶雪花
+            glyph: `<g stroke="#ffffff" stroke-width="2" stroke-linecap="round" fill="none" transform="translate(10, 8)">
+              <line x1="10" y1="2" x2="10" y2="18"/>
+              <line x1="2" y1="10" x2="18" y2="10"/>
+              <line x1="4" y1="4" x2="16" y2="16"/>
+              <line x1="4" y1="16" x2="16" y2="4"/>
+              <circle cx="10" cy="10" r="1.6" fill="#ffffff"/>
+            </g>`,
+          },
+          cool: {
+            gradStart: '#06b6d4',
+            gradEnd: '#0891b2',
+            label: '凉爽',
+            // 清爽微风
+            glyph: `<g stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" fill="none" transform="translate(9, 9)">
+              <path d="M2 7 C5 7, 12 7, 14 5 C15.5 3.5, 13.5 1.5, 12 2"/>
+              <path d="M1 11 C6 11, 15 11, 17 9 C18.5 7.5, 16.5 5.5, 15 6"/>
+              <path d="M3 15 C6 15, 10 15, 11 16.5 C11.5 17.5, 10.5 18.5, 9.5 18"/>
+            </g>`,
+          },
+          neutral: {
+            gradStart: '#10b981',
+            gradEnd: '#059669',
+            label: '舒适',
+            // 生态舒适绿叶
+            glyph: `<g fill="#ffffff" transform="translate(10, 8)">
+              <path d="M10 2 C16 4 18 10 17 16 C11 17 5 15 3 9 C2.5 7.5 4 4.5 10 2 Z"/>
+              <path d="M10 2 C9 7 7 11 3 14" stroke="#059669" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+            </g>`,
+          },
+          warm: {
+            gradStart: '#f59e0b',
+            gradEnd: '#d97706',
+            label: '微热',
+            // 暖阳晴照
+            glyph: `<g stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" fill="none" transform="translate(10, 8)">
+              <circle cx="10" cy="10" r="4.2" fill="#ffffff"/>
+              <line x1="10" y1="1.5" x2="10" y2="3.5"/>
+              <line x1="10" y1="16.5" x2="10" y2="18.5"/>
+              <line x1="1.5" y1="10" x2="3.5" y2="10"/>
+              <line x1="16.5" y1="10" x2="18.5" y2="10"/>
+              <line x1="4" y1="4" x2="5.5" y2="5.5"/>
+              <line x1="14.5" y1="14.5" x2="16" y2="16"/>
+              <line x1="4" y1="16" x2="5.5" y2="14.5"/>
+              <line x1="14.5" y1="5.5" x2="16" y2="4"/>
+            </g>`,
+          },
+          hot: {
+            gradStart: '#ef4444',
+            gradEnd: '#dc2626',
+            label: '炎热',
+            // 炽热烈焰
+            glyph: `<g fill="#ffffff" transform="translate(11, 7)">
+              <path d="M9 1 C9 4.5 12 7 12 11 C12 15 9.5 18 6 18 C2.5 18 0 15 0 11.5 C0 7 4.5 5 5 1.5 C5.5 3 7 4.5 7 6 C8 4 8.5 2.5 9 1 Z"/>
+            </g>`,
+          },
+        };
+
+        const style = sensationStyles[record.thermal_sensation] || sensationStyles.neutral;
+        const recKey = (record.check_in_id || `${Math.round(lon * 1000)}_${Math.round(lat * 1000)}`).replace(/[^a-zA-Z0-9_]/g, '_');
+        const gradId = `gr_${recKey}`;
+        const shId = `sh_${recKey}`;
+
+        // 采用 2x Retina 超采样渲染（SVG 80x100，Billboard 32x40），呈现极清无锯齿矢量质感与细腻阴影
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="100" viewBox="0 0 40 50">
+          <defs>
+            <filter id="${shId}" x="-30%" y="-20%" width="160%" height="150%">
+              <feDropShadow dx="0" dy="2.8" stdDeviation="2.6" flood-color="#000000" flood-opacity="0.32"/>
+            </filter>
+            <linearGradient id="${gradId}" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="${style.gradStart}"/>
+              <stop offset="100%" stop-color="${style.gradEnd}"/>
+            </linearGradient>
+          </defs>
+          <path d="M20 46 C12 36 4 28 4 18 A16 16 0 1 1 36 18 C36 28 28 36 20 46 Z" fill="url(#${gradId})" stroke="#ffffff" stroke-width="2.2" filter="url(#${shId})"/>
+          ${style.glyph}
+        </svg>`;
+
+        group.entities.add({
+          position: this.cesium.Cartesian3.fromDegrees(lon, lat, 18),
+          properties: { record },
+          billboard: {
+            image: `data:image/svg+xml,${encodeURIComponent(svg)}`,
+            width: 32,
+            height: 40,
+            verticalOrigin: this.cesium.VerticalOrigin.BOTTOM,
+            disableDepthTestDistance: Infinity,
+          },
+        });
       });
     });
     this.render();
@@ -607,45 +848,95 @@ export class SceneAdapter {
   render() { if (!this.destroyed) this.viewer.scene.requestRender(); }
   private scheduleViewportBuildingsUpdate() {
     if (this.buildingUpdateTimer) clearTimeout(this.buildingUpdateTimer);
+    // 调优防抖从 250ms 降至 90ms，停止鼠标移动后几乎瞬间触发拉取
     this.buildingUpdateTimer = setTimeout(() => {
       void this.refreshViewportBuildings();
-    }, 250);
+    }, 90);
   }
   private async refreshViewportBuildings() {
     if (this.destroyed || this.demo || !this.buildingVisible || !this.buildingApiUrl) return;
     const rectangle = this.viewer.camera.computeViewRectangle();
     if (!rectangle) return;
     const cesium = this.cesium;
-    const west = Math.max(this.config.bbox[0], cesium.Math.toDegrees(rectangle.west));
-    const south = Math.max(this.config.bbox[1], cesium.Math.toDegrees(rectangle.south));
-    const east = Math.min(this.config.bbox[2], cesium.Math.toDegrees(rectangle.east));
-    const north = Math.min(this.config.bbox[3], cesium.Math.toDegrees(rectangle.north));
+    let west = Math.max(this.config.bbox[0], cesium.Math.toDegrees(rectangle.west));
+    let south = Math.max(this.config.bbox[1], cesium.Math.toDegrees(rectangle.south));
+    let east = Math.min(this.config.bbox[2], cesium.Math.toDegrees(rectangle.east));
+    let north = Math.min(this.config.bbox[3], cesium.Math.toDegrees(rectangle.north));
     if (west >= east || south >= north) return;
 
+    // 针对倾斜俯瞰视角（俯仰角 -25° ~ -50°），computeViewRectangle 会向地平线远方延伸 8~15 公里，
+    // 导致远景超高层抢占限额、近景矮建筑被截断，出现“只有高楼有实体、矮楼只有底图影子”的阴影模拟失真。
+    // 因此获取视口中心地面交点（目标焦点），将请求包围盒约束在焦点周边有效视距内（约 2.0km ~ 2.5km）：
+    const centerRay = this.viewer.camera.getPickRay(new cesium.Cartesian2(this.viewer.canvas.clientWidth / 2, this.viewer.canvas.clientHeight / 2));
+    const groundPick = centerRay ? this.viewer.scene.globe.pick(centerRay, this.viewer.scene) : null;
+    if (groundPick) {
+      const carto = cesium.Cartographic.fromCartesian(groundPick);
+      const focusLon = cesium.Math.toDegrees(carto.longitude);
+      const focusLat = cesium.Math.toDegrees(carto.latitude);
+      const maxSpanLon = 0.024; // ~2.3km
+      const maxSpanLat = 0.020; // ~2.2km
+      west = Math.max(west, focusLon - maxSpanLon);
+      east = Math.min(east, focusLon + maxSpanLon);
+      south = Math.max(south, focusLat - maxSpanLat);
+      north = Math.min(north, focusLat + maxSpanLat);
+    }
+
     const cameraHeight = this.viewer.camera.positionCartographic.height;
-    // 保护全域热暴露场着色：高空（> 3200m）时密集微细白模破坏热力色带连续性；
-    // 此时隐藏建筑图层，保持热力图平滑纯净，杜绝全域零散杂斑
-    if (cameraHeight > 3200) {
+    // 保护全域热暴露场着色：超高空（> 3800m 且未开阴影）时密集微细白模破坏热力色带连续性；
+    // 此时隐藏建筑图层，保持热力图平滑纯净
+    if (cameraHeight > 3800 && !this.viewer.shadows) {
       if (this.groups.has('layer_buildings')) {
         this.groups.get('layer_buildings')!.show = false;
       }
       return;
     }
-    // 进入中近景街区视角（<= 3200m）时恢复建筑可见（若用户开启了建筑图层）
+    // 进入中近景街区视角（<= 3800m）或开启阴影模拟时恢复建筑可见
     if (this.buildingVisible && this.groups.has('layer_buildings')) {
       this.groups.get('layer_buildings')!.show = true;
     }
 
-    const isFar = cameraHeight > 1800;
-    const minHeight = isFar ? 20 : undefined;
-    const limit = 3000;
+    // 1. 建筑物加载与日照阴影模拟一致性策略：
+    // 当开启太阳阴影模拟（shadows=true）或处于街区尺度（<= 2600m）时，禁用 min_height 高度截断，
+    // 全量加载高低层所有建筑（包括多层住宅、商业裙房、石库门弄堂），
+    // 彻底解决“只有一部分高楼显示实体，另一部分低矮建筑只有影子”的严重物理与视觉脱节！
+    const isShadowsEnabled = !!this.viewer.shadows;
+    let minHeight: number | undefined;
+    let limit = 2500;
+
+    if (isShadowsEnabled || cameraHeight <= 2600) {
+      minHeight = undefined; // 街区近景与阴影模拟：全谱系建筑全量加载
+      limit = 2500;
+    } else {
+      // 仅在超大范围高空且未开阴影时，保留骨干天际线减负
+      minHeight = 28;
+      limit = 650;
+    }
+
+    // 2. 视口 25% 空间外扩缓冲命中检测（BBOX Buffer & Cache Hit）
+    // 若当前视口完全落在上次已拉取的包围盒内，且当前 LOD 精度满足要求，则 0ms 瞬间响应、0 网络冗余！
+    if (this.lastFetchedBbox) {
+      const [lbW, lbS, lbE, lbN] = this.lastFetchedBbox;
+      const isContained = west >= lbW && south >= lbS && east <= lbE && north <= lbN;
+      const isLODSatisfied = this.lastFetchedMinHeight === undefined || (minHeight !== undefined && this.lastFetchedMinHeight <= minHeight);
+      if (isContained && isLODSatisfied) {
+        return;
+      }
+    }
+
+    // 计算带 25% 缓冲外扩的请求包围盒（Padding）
+    const spanLon = east - west;
+    const spanLat = north - south;
+    const bufferedWest = Math.max(this.config.bbox[0], west - spanLon * 0.25);
+    const bufferedEast = Math.min(this.config.bbox[2], east + spanLon * 0.25);
+    const bufferedSouth = Math.max(this.config.bbox[1], south - spanLat * 0.25);
+    const bufferedNorth = Math.min(this.config.bbox[3], north + spanLat * 0.25);
 
     this.buildingAbortController?.abort();
     this.buildingAbortController = new AbortController();
 
     const params = new URLSearchParams({
       layer_id: 'layer_buildings',
-      bbox: `${west.toFixed(4)},${south.toFixed(4)},${east.toFixed(4)},${north.toFixed(4)}`,
+      bbox: `${bufferedWest.toFixed(4)},${bufferedSouth.toFixed(4)},${bufferedEast.toFixed(4)},${bufferedNorth.toFixed(4)}`,
       limit: String(limit),
     });
     if (minHeight !== undefined) {
@@ -661,8 +952,15 @@ export class SceneAdapter {
       const payload = await response.json();
       if (!Array.isArray(payload?.data)) return;
 
+      // 更新成功拉取的包围盒与 LOD 等级
+      this.lastFetchedBbox = [bufferedWest, bufferedSouth, bufferedEast, bufferedNorth];
+      this.lastFetchedMinHeight = minHeight;
+
       const group = this.group('layer_buildings');
       const now = Date.now();
+
+      // 3. 核心加速：批量挂起实体集合事件，杜绝每插入一个建筑就触发一次 Cesium 重索引与事件广播
+      group.entities.suspendEvents();
 
       for (const item of payload.data) {
         if (!item?.geometry || !item.id) continue;
@@ -679,8 +977,22 @@ export class SceneAdapter {
         }
         if (!rings.length || !rings[0] || rings[0].length < 3) continue;
 
-        const outerPositions = rings[0].map(pt => cesium.Cartesian3.fromDegrees(pt[0]!, pt[1]!));
-        const holes = rings.slice(1).map(ring => new cesium.PolygonHierarchy(ring.map(pt => cesium.Cartesian3.fromDegrees(pt[0]!, pt[1]!))));
+        // 计算建筑物平面质心坐标，用于底图热暴露场像素级颜色采样
+        let sumLon = 0;
+        let sumLat = 0;
+        const ring = rings[0]!;
+        for (let i = 0; i < ring.length; i++) {
+          sumLon += ring[i]![0]!;
+          sumLat += ring[i]![1]!;
+        }
+        const centerLon = sumLon / ring.length;
+        const centerLat = sumLat / ring.length;
+        this.buildingCenters.set(item.id, [centerLon, centerLat]);
+
+        const buildingColor = this.getBuildingColorAt(centerLon, centerLat);
+
+        const outerPositions = ring.map(pt => cesium.Cartesian3.fromDegrees(pt[0]!, pt[1]!));
+        const holes = rings.slice(1).map(r => new cesium.PolygonHierarchy(r.map(pt => cesium.Cartesian3.fromDegrees(pt[0]!, pt[1]!))));
         const hierarchy = new cesium.PolygonHierarchy(outerPositions, holes);
 
         const explicitHeight = typeof props.height_m === 'number' && props.height_m > 0
@@ -691,8 +1003,6 @@ export class SceneAdapter {
               ? props.levels * 3.5
               : 12;
 
-        // 去掉 DEM 高程基准：由于现有 12.5m DEM 未剔除建筑物高度（实为 DSM），
-        // 若将其作为建筑地基标高会导致底面抬升与高度重复叠加。建筑统一以平原地表（0m）为基准拉伸。
         const baseElevation = 0;
         const extrudedHeight = explicitHeight;
         const buildingName = typeof props.name === 'string' && props.name.trim() ? props.name.trim() : '街区建筑';
@@ -715,9 +1025,9 @@ export class SceneAdapter {
             hierarchy: new cesium.ConstantProperty(hierarchy),
             height: new cesium.ConstantProperty(baseElevation),
             extrudedHeight: new cesium.ConstantProperty(extrudedHeight),
-            material: new cesium.ColorMaterialProperty(this.color('#ffffff', this.buildingOpacity)),
-            outline: new cesium.ConstantProperty(true),
-            outlineColor: new cesium.ConstantProperty(this.color('#94a3b8', 0.25)),
+            material: new cesium.ColorMaterialProperty(buildingColor),
+            // 4. 核心加速：关闭 outline 独立 Worker 任务，避免成千上万个 PolygonOutlineGeometry 堵塞线程池
+            outline: new cesium.ConstantProperty(false),
             shadows: new cesium.ConstantProperty(cesium.ShadowMode.ENABLED),
           },
         });
@@ -725,9 +1035,13 @@ export class SceneAdapter {
         this.buildingEntities.set(item.id, entity);
       }
 
-      // LRU Eviction: maintain <= 6000 entities for smoother navigation
-      if (this.buildingEntities.size > 6000) {
-        const toEvictCount = this.buildingEntities.size - 4500;
+      // 批量添加完成后，统一恢复事件
+      group.entities.resumeEvents();
+
+      // LRU 淘汰机制：维持在 5,000 个实体以内，保障内存与漫游极致流畅
+      if (this.buildingEntities.size > 5000) {
+        group.entities.suspendEvents();
+        const toEvictCount = this.buildingEntities.size - 3500;
         const sortedEntries = Array.from(this.buildingAccessTime.entries()).sort((a, b) => a[1] - b[1]);
         for (let i = 0; i < toEvictCount && i < sortedEntries.length; i++) {
           const [id] = sortedEntries[i]!;
@@ -737,7 +1051,9 @@ export class SceneAdapter {
             this.buildingEntities.delete(id);
           }
           this.buildingAccessTime.delete(id);
+          this.buildingCenters.delete(id);
         }
+        group.entities.resumeEvents();
       }
 
       this.render();
@@ -752,6 +1068,9 @@ export class SceneAdapter {
     this.buildingAbortController?.abort();
     this.buildingEntities.clear();
     this.buildingAccessTime.clear();
+    this.buildingCenters.clear();
+    this.rasterSampler = null;
+    this.activeLegendColors = [];
     this.handler?.destroy();
     this.removers.forEach(remove => remove());
     this.viewer.destroy();
