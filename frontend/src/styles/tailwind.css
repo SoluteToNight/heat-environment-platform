@@ -1,0 +1,193 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #f4f6f3;
+  --color-ink: #263b36;
+  --color-muted: #64786f;
+  --color-accent: #176c53;
+  --color-line: #e0e7e1;
+  --color-terracotta: #c85a32;
+  --color-green-soft: #e1eee5;
+
+  /* Sensation Palette */
+  --color-sensation-cold: #2b7bc0;
+  --color-sensation-cool: #55a8dc;
+  --color-sensation-neutral: #6da38b;
+  --color-sensation-warm: #e58d3c;
+  --color-sensation-hot: #d64732;
+}
+
+:root {
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: var(--color-ink);
+  background-color: var(--color-canvas);
+}
+
+/* Base button styles utilizing Tailwind utilities */
+.button {
+  @apply inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-lg border border-line bg-white text-ink transition-colors hover:bg-canvas hover:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.button-primary {
+  @apply inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg bg-accent text-white shadow-xs transition-colors hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.icon-button {
+  @apply inline-flex size-9 items-center justify-center rounded-lg border border-line bg-white text-ink transition-colors hover:bg-canvas disabled:opacity-40 disabled:cursor-not-allowed;
+}
+
+.text-button {
+  @apply inline-flex items-center gap-1.5 px-1.5 py-1 text-xs font-medium text-accent rounded transition-colors hover:bg-green-soft;
+}
+
+/* Variable button */
+.variable-button {
+  @apply flex flex-col items-start gap-1.5 p-2.5 rounded-lg border border-line bg-white text-ink text-[13px] font-medium transition-colors text-left hover:border-accent disabled:opacity-45 disabled:cursor-not-allowed disabled:bg-canvas;
+}
+.variable-active {
+  @apply bg-green-soft border-accent text-accent font-semibold;
+}
+
+/* Thermal Sensation styles */
+.sensation-button {
+  @apply flex flex-col items-center justify-center gap-1.5 py-2 px-1 rounded-lg border border-line bg-white text-xs font-medium transition-all hover:border-accent;
+}
+
+.sensation-dot {
+  @apply inline-block size-2.5 rounded-full;
+}
+.sensation-cold { @apply bg-sensation-cold; }
+.sensation-cool { @apply bg-sensation-cool; }
+.sensation-neutral { @apply bg-sensation-neutral; }
+.sensation-warm { @apply bg-sensation-warm; }
+.sensation-hot { @apply bg-sensation-hot; }
+
+.sensation-label {
+  @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+}
+.label-cold { @apply bg-sky-100 text-sky-800; }
+.label-cool { @apply bg-blue-50 text-blue-700; }
+.label-neutral { @apply bg-emerald-50 text-emerald-800; }
+.label-warm { @apply bg-amber-50 text-amber-800; }
+.label-hot { @apply bg-rose-50 text-rose-800; }
+
+/* Panels & Cards */
+.metric-card {
+  @apply p-4 rounded-xl bg-white border border-line shadow-xs;
+}
+
+.panel-section {
+  @apply mt-5 pt-4 border-t border-line;
+}
+
+.section-title {
+  @apply text-[13px] font-semibold text-ink;
+}
+
+.record-card {
+  @apply w-full mt-2 p-3 rounded-lg border border-line bg-white text-left transition-colors hover:border-accent hover:bg-[#fafcfb];
+}
+
+/* Form fields */
+.field-label {
+  @apply flex flex-col gap-1.5 text-xs font-medium text-ink;
+}
+
+.input {
+  @apply w-full px-3 py-2 rounded-lg border border-line bg-white text-sm text-ink outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent;
+}
+
+.toggle-row {
+  @apply flex items-center justify-between py-1.5 text-[13px] cursor-pointer;
+}
+
+.switch {
+  @apply appearance-none w-9 h-5 rounded-full bg-[#ccd7ce] relative cursor-pointer outline-none transition-colors checked:bg-accent;
+}
+.switch::after {
+  content: "";
+  @apply absolute top-0.5 left-0.5 size-4 rounded-full bg-white transition-transform;
+}
+.switch:checked::after {
+  @apply translate-x-4;
+}
+
+/* Clean Spatio-temporal Timeline Controller */
+.timeline-panel {
+  @apply absolute bottom-6 left-1/2 -translate-x-1/2 w-[min(90%,26rem)] px-4 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-line/80 shadow-xl z-20 transition-all;
+}
+
+/* Dialog */
+.app-dialog {
+  @apply border-0 rounded-2xl p-0 bg-white shadow-2xl w-[90vw] outline-none backdrop:bg-ink/40 backdrop:backdrop-blur-xs;
+}
+
+/* Loader spinner */
+.loader {
+  @apply inline-block size-5 border-2 border-line border-t-accent rounded-full animate-spin;
+}
+
+.step {
+  @apply inline-flex size-6 items-center justify-center rounded-full bg-green-soft text-accent text-xs font-bold;
+}
+
+.status-warning {
+  @apply p-3 rounded-lg bg-amber-50 text-amber-800 text-[13px] border border-amber-200;
+}
+
+.map-workspace { height: 100dvh; }
+.map-workspace > header { height: 72px; padding-inline: 24px; gap: 16px; }
+.map-workspace > header > div { min-width: 0; }
+.map-workspace > header .button, .map-workspace > header .button-primary, .map-workspace > header h1 { white-space: nowrap; }
+.map-workspace > header > div:last-child { flex-shrink: 0; }
+.map-workspace > header > div:nth-child(2) { white-space: nowrap; }
+.map-workspace aside { background: #fbfcfa; }
+.map-workspace aside:first-child { box-shadow: 6px 0 24px #233f3210; }
+.map-workspace aside:last-child { box-shadow: -6px 0 24px #233f3210; }
+.scene-stage { isolation: isolate; }
+.scene-heading {
+  position: absolute; top: 24px; left: 24px; z-index: 10;
+  max-width: calc(100% - 108px); padding: 18px 22px;
+  border: 1px solid #ffffffb8; border-radius: 16px;
+  background: #fffffff0; box-shadow: 0 8px 32px #28453614; backdrop-filter: blur(12px);
+}
+.scene-dot { width: 7px; height: 7px; border-radius: 50%; background: #348166; box-shadow: 0 0 0 4px #34816612; }
+.map-toolbox { padding: 7px; border: 1px solid #ffffffb8; border-radius: 16px; background: #fffffff0; box-shadow: 0 8px 32px #28453614; backdrop-filter: blur(12px); }
+.map-toolbox .icon-button { border: 0; background: transparent; width: 40px; height: 40px; border-radius: 10px; box-shadow: none; }
+.map-toolbox .icon-button:hover { background: #e5efe8; color: #176c53; }
+.variable-button { min-height: 78px; padding: 13px; border-radius: 12px; gap: 9px; }
+.variable-active { background: #e7f0e9; border-color: #a5bfae; box-shadow: inset 3px 0 #176c53; }
+.metric-card { padding: 20px; border-radius: 16px; background: linear-gradient(135deg, #edf5ed, #fff); border-color: #d8e6d9; }
+.record-card { border-radius: 12px; padding: 14px; }
+.section-title { font-size: 14px; letter-spacing: .02em; }
+.toggle-row { min-height: 42px; gap: 12px; }
+.timeline-panel { bottom: 24px; padding: 12px 18px; border-color: #ffffffb8; box-shadow: 0 8px 30px #28453620; }
+.map-workspace footer { font-size: 11px; padding: 7px 24px; background: #fbfcfa; }
+.map-workspace footer a { text-decoration: underline; text-underline-offset: 2px; }
+.cesium-widget-credits { background: #ffffffe0 !important; border-radius: 5px; padding: 2px 6px !important; font-size: 10px !important; }
+button, summary { cursor: pointer; }
+:where(button, input, select, summary, a):focus-visible { outline: 2px solid #176c53; outline-offset: 3px; }
+input[type="range"] { accent-color: #176c53; }
+* { scrollbar-width: thin; scrollbar-color: #c1cec4 transparent; }
+@media (max-width: 1279px) {
+  .map-workspace > header { padding-inline: 14px; }
+  .map-workspace aside:first-child { position: absolute; left: 0; top: 0; bottom: 0; z-index: 30; }
+  .map-workspace aside:last-child { position: absolute; right: 0; top: 0; bottom: 0; z-index: 30; }
+  .map-workspace > div > button { z-index: 40; }
+}
+@media (max-width: 767px) {
+  .map-workspace > header { height: 64px; padding-inline: 10px; }
+  .map-workspace > header h1 { max-width: 72px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+  .map-workspace > header > div:first-child > div:first-child > div:first-child { display: none; }
+  .map-workspace > header .button { padding: 8px; }
+  .map-workspace > header .button-primary { padding: 10px; }
+  .map-workspace > header > div { gap: 6px; }
+  .scene-heading { left: 14px; top: 16px; padding: 14px; }
+  .scene-heading h2 { font-size: 17px; }
+  .timeline-panel { bottom: 30px; padding: 12px 14px; }
+  .map-workspace footer { padding-inline: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
+}

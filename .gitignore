@@ -1,0 +1,74 @@
+# ==============================================================================
+# Heat Environment Platform - Git Ignore Rules
+# 严格遵循防隐私泄露与无污染仓库规范
+# ==============================================================================
+
+# --- 1. 隐私凭据与密钥 (Privacy, Secrets & Credentials) ---
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.token
+*.local
+.cesium-token.local
+*.cesium-token.local
+
+# --- 2. 浏览器自动化会话与个人配置 (Browser Profiles & Sessions) ---
+cloakbrowser-profile/
+.cloakbrowser/
+
+# --- 3. 运行时日志与导出数据 (Logs & Runtime Exports) ---
+logs/
+*.log
+backend/storage/exports/
+storage/exports/
+*.csv.tmp
+
+# --- 4. 依赖包与虚拟环境 (Dependencies & Virtual Environments) ---
+node_modules/
+.venv/
+venv/
+env/
+ENV/
+
+# --- 5. 前端编译产物与测试工件 (Frontend Builds & Test Artifacts) ---
+dist/
+frontend/dist/
+artifacts/
+frontend/artifacts/
+.vite/
+.vite-temp/
+
+# --- 6. Python 编译缓存与测试缓存 (Python Caches) ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.cache/
+
+# --- 7. 天气与空间网格动态缓存 (Dynamic Forecast & Spatial Cache) ---
+backend/app/data/forecast_cache/
+forecast_cache/
+*.tile.json
+
+# --- 8. 本地全量数据备份与大文件转储 (Large Data Dumps) ---
+*.dump
+*.tar.gz
+*.sql.gz
+*.bak
+*.gdb/
+
+# --- 9. 编辑器与操作系统产生文件 (IDE & OS Files) ---
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+.DS_Store
+Thumbs.db
+desktop.ini

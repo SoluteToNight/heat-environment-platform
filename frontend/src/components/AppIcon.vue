@@ -1,0 +1,6 @@
+<script setup lang="ts">
+import { ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpRight, Bookmark, Building2, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, CloudSun, Compass, Droplets, Expand, Eye, Focus, Info, Layers3, LocateFixed, MapPin, Menu, Minus, Navigation, Pause, Play, Plus, Search, Settings2, SlidersHorizontal, Sun, Thermometer, Trees, Waves, Wind, X } from 'lucide-vue-next';
+defineProps<{ name: string; size?: number }>();
+const icons: Record<string, unknown> = { download: ArrowDownToLine, back: ArrowLeft, next: ArrowRight, external: ArrowUpRight, bookmark: Bookmark, building: Building2, check: Check, down: ChevronDown, left: ChevronLeft, right: ChevronRight, clock: Clock3, weather: CloudSun, compass: Compass, drop: Droplets, expand: Expand, eye: Eye, focus: Focus, info: Info, layers: Layers3, locate: LocateFixed, pin: MapPin, menu: Menu, minus: Minus, north: Navigation, pause: Pause, play: Play, plus: Plus, search: Search, settings: Settings2, sliders: SlidersHorizontal, sun: Sun, temperature: Thermometer, tree: Trees, water: Waves, wind: Wind, close: X };
+</script>
+<template><component :is="icons[name] || MapPin" :size="size || 18" :stroke-width="1.65" aria-hidden="true" /></template>
