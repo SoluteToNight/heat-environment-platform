@@ -6,17 +6,40 @@ import DataInfoModal from '../components/DataInfoModal.vue';
 import DetailPanel from '../components/DetailPanel.vue';
 import ExportModal from '../components/ExportModal.vue';
 import ForecastModal from '../components/ForecastModal.vue';
+import HeatPerceptionModal from '../components/HeatPerceptionModal.vue';
 import LayerPanel from '../components/LayerPanel.vue';
 import MyCheckInsModal from '../components/MyCheckInsModal.vue';
 import CheckInForm from '../features/check-ins/CheckInForm.vue';
 import Timeline from '../features/environment/Timeline.vue';
 import MapScene from '../features/scene/MapScene.vue';
+import AboutPage from '../pages/AboutPage.vue';
+import HomePage from '../pages/HomePage.vue';
+import ProfilePage from '../pages/ProfilePage.vue';
 import { api } from '../services/api';
 import type { CheckIn, Coordinates, FeatureDetail, Place, PublicCheckIn } from '../services/contracts';
+import { legendGradientCss, MITIGATION_LEGEND_TICKS, phaseMeta, RISK_LEVELS, RISK_LEVEL_ORDER } from '../services/heatRisk';
 import { modeNames } from '../services/format';
 import { useWorkspace } from '../stores/workspace';
+import { navigate, siteRoute } from './router';
 
 const store = useWorkspace();
+const route = siteRoute;
+
+// 地图工作台懒加载：首次进入 explore 才初始化，之后常驻缓存避免 Cesium 重复重建
+const mapMounted = ref(false);
+watch(() => route.value, (name) => {
+  if (name === 'explore' && !mapMounted.value) {
+    mapMounted.value = true;
+    store.initialize();
+    store.startPolling();
+  }
+  if (name !== 'explore') store.stop();
+}, { immediate: true });
+
+onMounted(() => {
+  // 站点页头与个人中心依赖登录态，提前轻量获取
+  api.session().then(session => { store.session = session; }).catch(() => {});
+});
 
 // Panels toggle
 const leftPanelOpen = ref(window.innerWidth >= 1280);
@@ -46,16 +69,24 @@ const myCheckInsOpen = ref(false);
 const exportOpen = ref(false);
 const dataInfoOpen = ref(false);
 const forecastOpen = ref(false);
+const heatPerceptionOpen = ref(false);
 
 function handleOpenForecastFromInfo() {
   dataInfoOpen.value = false;
   forecastOpen.value = true;
 }
 
+function handleOpenHeatPerceptionFromInfo() {
+  dataInfoOpen.value = false;
+  heatPerceptionOpen.value = true;
+}
+
 // Map ref
 const mapRef = ref<InstanceType<typeof MapScene>>();
 
 const activeLegend = computed(() => store.activeItem?.assets.length ? store.activeItem.legend : null);
+const riskLegendVisible = computed(() => store.heatRisk.enabled && !!store.heatRiskDataset && !store.heatRisk.loading && !store.heatRisk.error);
+const riskPhaseLabel = computed(() => phaseMeta(store.heatRisk.phase).label);
 function openExport() {
   if (store.view?.view_id.startsWith('sp_') && store.selection) {
     const link = document.createElement('a');
@@ -69,11 +100,6 @@ watch(() => store.scene, () => {
   selectedRecord.value = null;
   selectedFeature.value = null;
   layerStatuses.value = {};
-});
-
-onMounted(() => {
-  store.initialize();
-  store.startPolling();
 });
 
 onBeforeUnmount(() => {
@@ -167,11 +193,11 @@ async function handleCaptureMap() {
 </script>
 
 <template>
-  <div class="map-workspace flex h-screen w-screen flex-col overflow-hidden bg-canvas text-ink antialiased select-none">
+  <div v-if="mapMounted" v-show="route === 'explore'" class="map-workspace flex h-screen w-screen flex-col overflow-hidden bg-canvas text-ink antialiased select-none">
     <!-- Top Navigation Header -->
     <header class="z-20 flex h-16 shrink-0 items-center justify-between border-b border-line bg-white px-5 shadow-xs">
       <div class="flex items-center gap-4">
-        <div class="flex items-center gap-2">
+        <button class="flex items-center gap-2 text-left transition-opacity hover:opacity-80" title="返回网站首页" @click="navigate('home')">
           <div class="grid size-9 place-items-center rounded-lg bg-accent text-white shadow-xs">
             <AppIcon name="temperature" :size="20" />
           </div>
@@ -179,7 +205,7 @@ async function handleCaptureMap() {
             <h1 class="text-sm font-bold tracking-tight text-ink sm:text-base">上海 · 热环境探索</h1>
             <p class="hidden text-xs text-muted sm:block">城市热暴露时空可视分析</p>
           </div>
-        </div>
+        </button>
 
         <!-- Scene selector -->
         <div v-if="store.scenes.length > 1" class="hidden md:block">
@@ -274,6 +300,14 @@ async function handleCaptureMap() {
 
         <button
           class="icon-button"
+          title="返回网站首页"
+          @click="navigate('home')"
+        >
+          <AppIcon name="home" :size="16" />
+        </button>
+
+        <button
+          class="icon-button"
           title="数据说明与方法"
           @click="dataInfoOpen = true"
         >
@@ -298,7 +332,7 @@ async function handleCaptureMap() {
         class="z-10 flex h-full shrink-0 flex-col border-r border-line bg-white transition-all duration-200"
         :class="leftPanelOpen ? 'w-64 p-5 overflow-y-auto' : 'w-0 p-0 border-r-0 overflow-hidden'"
       >
-        <div v-if="leftPanelOpen" class="space-y-4">
+        <div v-show="leftPanelOpen" class="space-y-4">
           <LayerPanel
             :statuses="layerStatuses"
             @close="leftPanelOpen = false"
@@ -306,6 +340,7 @@ async function handleCaptureMap() {
             @opacity="(val) => mapRef?.opacity(val)"
             @canopy="(val) => mapRef?.canopyOpacity(val)"
             @building-opacity="(val) => mapRef?.buildingOpacity(val)"
+            @presentation="(mode) => mapRef?.presentation(mode)"
             @methods="dataInfoOpen = true"
           />
         </div>
@@ -376,18 +411,48 @@ async function handleCaptureMap() {
 
         <!-- Floating Corner Legend (Visible only when left TOC panel is collapsed) -->
         <div
-          v-if="!leftPanelOpen && activeLegend"
-          class="absolute bottom-6 left-6 z-20 w-48 rounded-xl border border-line bg-white/95 p-2.5 text-xs shadow-lg backdrop-blur-md transition-all"
+          v-if="!leftPanelOpen && (activeLegend || riskLegendVisible)"
+          class="absolute bottom-6 left-6 z-20 flex w-52 flex-col gap-2"
         >
-          <div class="flex items-center justify-between font-medium text-ink">
-            <span>{{ store.committedProduct?.name }}</span>
-            <span class="text-muted text-[10px]">{{ store.activeItem?.unit }}</span>
+          <!-- 热暴露风险图例（模型反演图层开启时显示） -->
+          <div
+            v-if="riskLegendVisible"
+            class="rounded-xl border border-line bg-white/95 p-2.5 text-xs shadow-lg backdrop-blur-md"
+          >
+            <div class="flex items-center justify-between font-medium text-ink">
+              <span class="flex items-center gap-1.5"><AppIcon name="flame" :size="13" class="text-terracotta" />热暴露风险</span>
+              <span class="text-[10px] text-muted">{{ riskPhaseLabel }}</span>
+            </div>
+            <div v-if="store.heatRisk.style === 'level'" class="mt-2 grid grid-cols-2 gap-1.5">
+              <div v-for="level in RISK_LEVEL_ORDER" :key="level" class="flex items-center gap-1.5">
+                <span class="size-2.5 shrink-0 rounded-sm ring-1 ring-black/15" :style="{ background: RISK_LEVELS[level].color }" />
+                <span class="text-[11px]">{{ RISK_LEVELS[level].label }}</span>
+              </div>
+            </div>
+            <template v-else>
+              <div class="mt-2 h-2.5 w-full rounded-sm ring-1 ring-black/15" :style="{ background: legendGradientCss(store.heatRisk.style) }" />
+              <div class="mt-1 flex justify-between text-[10px] text-muted tabular-nums">
+                <template v-if="store.heatRisk.style === 'probability'"><span>0%</span><span>50%</span><span>100%</span></template>
+                <template v-else><span v-for="tick in MITIGATION_LEGEND_TICKS" :key="tick.label">{{ tick.label }}</span></template>
+              </div>
+              <p class="mt-1.5 text-[10px] leading-4 text-muted">{{ store.heatRisk.style === 'probability' ? 'M1 模型偏热概率' : 'M1−M0 下垫面缓解' }}</p>
+            </template>
           </div>
-          <div class="mt-1.5 h-2 w-full rounded-sm" :style="{ background: `linear-gradient(to right, ${activeLegend.colors.join(', ')})` }" />
-          <div class="mt-1 flex justify-between text-[10px] text-muted tabular-nums">
-            <span>{{ activeLegend.min }}</span>
-            <span>{{ ((activeLegend.min + activeLegend.max) / 2).toFixed(1) }}</span>
-            <span>{{ activeLegend.max }}</span>
+          <!-- 环境变量图例 -->
+          <div
+            v-if="activeLegend"
+            class="rounded-xl border border-line bg-white/95 p-2.5 text-xs shadow-lg backdrop-blur-md transition-all"
+          >
+            <div class="flex items-center justify-between font-medium text-ink">
+              <span>{{ store.committedProduct?.name }}</span>
+              <span class="text-muted text-[10px]">{{ store.activeItem?.unit }}</span>
+            </div>
+            <div class="mt-1.5 h-2.5 w-full rounded-sm ring-1 ring-black/15" :style="{ background: `linear-gradient(to right, ${activeLegend.colors.join(', ')})` }" />
+            <div class="mt-1 flex justify-between text-[10px] text-muted tabular-nums">
+              <span>{{ activeLegend.min }}</span>
+              <span>{{ ((activeLegend.min + activeLegend.max) / 2).toFixed(1) }}</span>
+              <span>{{ activeLegend.max }}</span>
+            </div>
           </div>
         </div>
 
@@ -418,6 +483,7 @@ async function handleCaptureMap() {
             @checkin="openCheckInModal(store.selection?.coordinates)"
             @record="(rec) => { selectedRecord = rec; selectedFeature = null; store.choosePoint(rec.location.coordinates, rec.alias); mapRef?.focus(rec.location.coordinates); }"
             @export="openExport"
+            @login="authOpen = true"
           />
         </div>
       </aside>
@@ -462,11 +528,22 @@ async function handleCaptureMap() {
       :open="dataInfoOpen"
       @close="dataInfoOpen = false"
       @open-forecast="handleOpenForecastFromInfo"
+      @open-heat-perception="handleOpenHeatPerceptionFromInfo"
     />
 
     <ForecastModal
       :open="forecastOpen"
       @close="forecastOpen = false"
     />
+
+    <HeatPerceptionModal
+      :open="heatPerceptionOpen"
+      @close="heatPerceptionOpen = false"
+    />
   </div>
+
+  <!-- Site pages -->
+  <HomePage v-if="route === 'home'" />
+  <ProfilePage v-else-if="route === 'profile'" />
+  <AboutPage v-else-if="route === 'about'" />
 </template>

@@ -4,6 +4,7 @@ param(
     [ValidateRange(1024, 65535)][int]$BackendPort = 8000,
     [ValidateRange(1024, 65535)][int]$FrontendPort = 5178,
     [switch]$Demo,
+    [switch]$NoReload,
     [switch]$Check,
     [switch]$VerifyStartup
 )
@@ -48,7 +49,7 @@ function Resolve-ServicePort([int]$PreferredPort, [bool]$Explicit, [int]$Exclude
 function Wait-Service([System.Diagnostics.Process]$Process, [string]$Url, [string]$Name) {
     $deadline = [DateTime]::UtcNow.AddSeconds(120)
     while ([DateTime]::UtcNow -lt $deadline) {
-        if ($Process.HasExited) { throw "$Name exited. See logs in $runDirectory" }
+        if ($Process.HasExited) { throw "$Name 进程已意外退出，请查看对应独立 pwsh 窗口中的报错输出。" }
         try {
             $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2
             if ($response.StatusCode -eq 200) { return }
@@ -56,7 +57,7 @@ function Wait-Service([System.Diagnostics.Process]$Process, [string]$Url, [strin
         catch { }
         Start-Sleep -Milliseconds 500
     }
-    throw "$Name did not become ready within 120 seconds. See logs in $runDirectory"
+    throw "$Name 在 120 秒内未就绪，请检查对应独立 pwsh 窗口中的启动状态。"
 }
 
 function Stop-OwnedProcess([System.Diagnostics.Process]$Process) {
@@ -105,31 +106,70 @@ try {
     Write-Host "Preflight passed. Backend: $BackendPort; frontend: $FrontendPort."
     if ($Check) { return }
 
-    $runDirectory = Join-Path $PSScriptRoot ('logs\' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + $PID)
-    New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
-    $env:VITE_DATA_MODE = if ($Demo) { 'demo' } else { 'api' }
-    $env:VITE_API_BASE = '/api/v1'
-    $env:API_PROXY_TARGET = "http://127.0.0.1:$BackendPort"
-    $env:PYTHONUNBUFFERED = '1'
-
-    Write-Host "Starting backend (existing startup initializes platform tables). Logs: $runDirectory"
-    $backendProcess = Start-Process -FilePath $PythonPath -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', "$BackendPort") -WorkingDirectory $backendDirectory -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runDirectory 'backend.stdout.log') -RedirectStandardError (Join-Path $runDirectory 'backend.stderr.log')
-    Wait-Service $backendProcess "http://127.0.0.1:$BackendPort/health" 'Backend'
-
-    $frontendProcess = Start-Process -FilePath $nodePath -ArgumentList @('"' + $vitePath + '"', '--host', '127.0.0.1', '--port', "$FrontendPort", '--strictPort') -WorkingDirectory $frontendDirectory -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runDirectory 'frontend.stdout.log') -RedirectStandardError (Join-Path $runDirectory 'frontend.stderr.log')
-    Wait-Service $frontendProcess "http://127.0.0.1:$FrontendPort/" 'Frontend'
-    Write-Host ''
-    Write-Host "Frontend: http://127.0.0.1:$FrontendPort/?mode=$env:VITE_DATA_MODE"
-    Write-Host "API docs: http://127.0.0.1:$BackendPort/docs"
-    Write-Host "Data mode: $env:VITE_DATA_MODE"
-    if ($VerifyStartup) { Write-Host 'Startup verification passed. Stopping verification services.'; return }
-    Write-Host 'Keep this window open. Press Ctrl+C to stop both services.'
-    while ($true) {
-        if ($backendProcess.HasExited -or $frontendProcess.HasExited) {
-            throw "A service exited unexpectedly. See logs in $runDirectory"
-        }
-        Start-Sleep -Seconds 1
+    $pwshCmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if (-not $pwshCmd) {
+        $pwshCmd = Get-Command powershell.exe -ErrorAction Stop
     }
+    $pwshPath = $pwshCmd.Source
+    $dataMode = if ($Demo) { 'demo' } else { 'api' }
+    # 后端代码热重载：uvicorn --reload 仅监视 backend/app 下的 *.py；未安装 watchfiles 时自动回退为轮询
+    $reloadArgs = if ($NoReload) { '' } else { ' --reload --reload-dir app' }
+    $reloadLabel = if ($NoReload) { '已关闭' } else { '已启用 (backend/app)' }
+
+    $backendScript = @"
+`$host.UI.RawUI.WindowTitle = '热环境平台 - 后端服务 (端口: $BackendPort)'
+Set-Location -LiteralPath '$backendDirectory'
+`$env:PYTHONUNBUFFERED = '1'
+Write-Host '==================================================' -ForegroundColor Cyan
+Write-Host '  热环境平台 - 后端服务 (FastAPI / Uvicorn)' -ForegroundColor Cyan
+Write-Host '  运行目录: $backendDirectory' -ForegroundColor DarkGray
+Write-Host '  监听端口: 127.0.0.1:$BackendPort' -ForegroundColor DarkGray
+Write-Host '  代码热重载: $reloadLabel' -ForegroundColor DarkGray
+Write-Host '==================================================' -ForegroundColor Cyan
+& '$PythonPath' -m uvicorn app.main:app --host 127.0.0.1 --port $BackendPort$reloadArgs
+"@
+
+    $frontendScript = @"
+`$host.UI.RawUI.WindowTitle = '热环境平台 - 前端服务 (端口: $FrontendPort)'
+Set-Location -LiteralPath '$frontendDirectory'
+`$env:VITE_DATA_MODE = '$dataMode'
+`$env:VITE_API_BASE = '/api/v1'
+`$env:API_PROXY_TARGET = 'http://127.0.0.1:$BackendPort'
+Write-Host '==================================================' -ForegroundColor Green
+Write-Host '  热环境平台 - 前端服务 (Vite / Vue 3)' -ForegroundColor Green
+Write-Host '  运行目录: $frontendDirectory' -ForegroundColor DarkGray
+Write-Host '  本地访问: http://127.0.0.1:$FrontendPort/?mode=$dataMode' -ForegroundColor DarkGray
+Write-Host '==================================================' -ForegroundColor Green
+& '$nodePath' '$vitePath' --host 127.0.0.1 --port $FrontendPort --strictPort
+"@
+
+    Write-Host "正在拉起独立 pwsh 会话启动后端服务 (端口: $BackendPort)..."
+    $backendProcess = Start-Process -FilePath $pwshPath -ArgumentList @('-NoExit', '-Command', $backendScript) -WorkingDirectory $backendDirectory -PassThru
+
+    Write-Host "正在拉起独立 pwsh 会话启动前端服务 (端口: $FrontendPort)..."
+    $frontendProcess = Start-Process -FilePath $pwshPath -ArgumentList @('-NoExit', '-Command', $frontendScript) -WorkingDirectory $frontendDirectory -PassThru
+
+    Write-Host "等待服务启动就绪..."
+    Wait-Service $backendProcess "http://127.0.0.1:$BackendPort/health" 'Backend'
+    Wait-Service $frontendProcess "http://127.0.0.1:$FrontendPort/" 'Frontend'
+
+    Write-Host ''
+    Write-Host "==========================================================" -ForegroundColor Green
+    Write-Host "前后端服务已在两个独立 pwsh 窗口中成功运行：" -ForegroundColor Green
+    Write-Host "  - 前端界面: http://127.0.0.1:$FrontendPort/?mode=$dataMode" -ForegroundColor Cyan
+    Write-Host "  - API 文档: http://127.0.0.1:$BackendPort/docs" -ForegroundColor Cyan
+    Write-Host "  - 数据模式: $dataMode" -ForegroundColor Yellow
+    Write-Host "==========================================================" -ForegroundColor Green
+    Write-Host "提示: 前后端窗口各自独立运行，可在各自窗口查看实时日志，按 Ctrl+C 独立关闭或重启。"
+
+    if ($VerifyStartup) {
+        Write-Host 'Startup verification passed. Stopping verification services.'
+        return
+    }
+
+    # 启动成功且非验证模式，解除托管，保留两个独立 pwsh 窗口长期运行
+    $backendProcess = $null
+    $frontendProcess = $null
 }
 catch {
     Write-Host "Startup failed: $($_.Exception.Message)" -ForegroundColor Red

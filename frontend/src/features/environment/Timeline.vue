@@ -3,17 +3,49 @@ import { computed, ref, watch } from 'vue';
 import AppIcon from '../../components/AppIcon.vue';
 import { useWorkspace } from '../../stores/workspace';
 import { localTime } from '../../services/format';
+import { pickTimelineLabels } from './timelineLabels';
 
 const store = useWorkspace();
 const dragging = ref(false);
 const preview = ref(0);
 
-const committedIndex = computed(() => Math.max(0, store.times.findIndex(time => time === store.activeItem?.resolved_time)));
+const committedIndex = computed(() => {
+  const target = Date.parse(store.activeItem?.resolved_time || store.view?.requested_time || '');
+  if (!Number.isFinite(target) || !store.times.length) return 0;
+  return store.times.reduce((best, time, index) => Math.abs(Date.parse(time) - target) < Math.abs(Date.parse(store.times[best]!) - target) ? index : best, 0);
+});
 watch(committedIndex, value => { if (!dragging.value) preview.value = value; }, { immediate: true });
 
-const labels = computed(() => [...new Set([0, Math.floor((store.times.length - 1) / 3), Math.floor((store.times.length - 1) * 2 / 3), store.times.length - 1])].filter(index => index >= 0));
+const labels = computed(() => pickTimelineLabels(store.times));
+
+function labelStyle(index: number): Record<string, string> {
+  if (index <= 0) return { left: '0%' };
+  if (index >= store.times.length - 1) return { left: '100%', transform: 'translateX(-100%)' };
+  return { left: `${((index / Math.max(1, store.times.length - 1)) * 100).toFixed(3)}%`, transform: 'translateX(-50%)' };
+}
+
+let dragTimer: ReturnType<typeof setTimeout> | undefined;
+function onInput() {
+  dragging.value = true;
+  store.stop();
+  clearTimeout(dragTimer);
+  const targetTime = store.times[preview.value];
+  if (!targetTime) return;
+
+  if (store.isTimeCached(targetTime)) {
+    void store.switchView({ kind: 'at', time: targetTime });
+    return;
+  }
+
+  dragTimer = setTimeout(() => {
+    if (dragging.value && store.times[preview.value]) {
+      void store.switchView({ kind: 'at', time: store.times[preview.value]! });
+    }
+  }, 80);
+}
 
 function commit() {
+  clearTimeout(dragTimer);
   dragging.value = false;
   store.stop();
   if (store.times[preview.value]) void store.switchView({ kind: 'at', time: store.times[preview.value]! });
@@ -61,11 +93,11 @@ function commit() {
             :disabled="!store.times.length"
             aria-label="选择场景时刻"
             :aria-valuetext="localTime(store.times[preview], true)"
-            @input="dragging = true; store.stop()"
+            @input="onInput"
             @change="commit"
           />
-          <div class="mt-0.5 flex justify-between text-[10px] text-muted tabular-nums">
-            <span v-for="index in labels" :key="index">{{ localTime(store.times[index]) }}</span>
+          <div class="relative mt-1 h-4 text-[10px] leading-4 text-muted tabular-nums">
+            <span v-for="index in labels" :key="index" class="absolute whitespace-nowrap" :style="labelStyle(index)">{{ localTime(store.times[index], true) }}</span>
           </div>
         </div>
       </div>

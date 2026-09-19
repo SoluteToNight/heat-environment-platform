@@ -20,9 +20,9 @@ def translate_error(error):
 
 
 @router.get('/releases/{run_id}/raster/{variable}/{frame}.png')
-def raster(run_id: str, variable: str, frame: int, size: int = Query(default=1024, ge=128, le=2048)):
+def raster(run_id: str, variable: str, frame: str, size: int = Query(default=512, ge=128, le=2048)):
     try:
-        return Response(spatial.raster_png(run_id, variable, frame, size=size), media_type='image/png', headers={'Cache-Control': 'public, max-age=86400, immutable'})
+        return Response(spatial.raster_png(run_id, variable, float(frame), size=size), media_type='image/png', headers={'Cache-Control': 'public, max-age=86400'})
     except (ValueError, FileNotFoundError) as error:
         raise translate_error(error) from None
 

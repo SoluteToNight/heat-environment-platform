@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db.session import get_db
 from app.schemas.auth import LoginRequest, SessionResponse, SessionUser
-from app.schemas.common import make_api_response
+from app.schemas.common import format_utc_z, make_api_response
 from app.services.auth_service import (
     authenticate_user,
     create_user_session,
@@ -51,7 +51,7 @@ def login(
     data = SessionResponse(
         is_authenticated=True,
         session_id=session.id,
-        expires_at=session.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=format_utc_z(session.expires_at),
         user=SessionUser(
             id=user.id,
             username=user.username,
@@ -87,7 +87,7 @@ def get_session_info(
         return make_api_response(data.model_dump(), request_id)
 
     session = get_session_by_id(db, session_id)
-    expires_str = session.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if session else None
+    expires_str = format_utc_z(session.expires_at) if session else None
 
     data = SessionResponse(
         is_authenticated=True,

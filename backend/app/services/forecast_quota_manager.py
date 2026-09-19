@@ -4,7 +4,8 @@ Strictly protects the QWeather API call budget for Shanghai Urban Heat Exposure 
 - Budget Limit: 5,000 calls (2026-09-17 to 2026-09-26)
 - Soft Warning Threshold: 4,500 calls (90%)
 - Hard Cutoff Limit: 4,800 calls (96%)
-- Daily Planned Consumption: 100 points x 1 call/day = 100 calls/day (1,000 calls / 10 days = 20%)
+- Daily Planned Consumption: 144 points (126 control + 18 test) x 1 call/day = 144 calls/day
+  (~1,440 calls / 10 days = 29%); retries and failures are counted as well.
 """
 
 import json

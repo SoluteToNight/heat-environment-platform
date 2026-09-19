@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import math
+import re
 import struct
 import time
 from datetime import datetime, timezone
@@ -21,6 +22,34 @@ from scipy.ndimage import map_coordinates
 logger = logging.getLogger(__name__)
 
 TILE_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "forecast_cache" / "tiles"
+
+# QWeather tile URL structure (verified 2026-09-19 against captured metadata):
+#   .../data/{product}/{version}/{run YYYYMMDDHH}/{YYYY}/{MM}/{DD}/{HH}/{z}/{x}/{y}/{layer}.jpg
+# e.g. https://tiles.qweather.com/data/g/2.0/2026091812/2026/09/19/01/2/3/1/rh-2m.jpg
+# where 2026091812 is the model run time and 2026/09/19/01 the tile valid time.
+# NOTE: the hour segment appears to be written in different timezone conventions per
+# layer family (tmp-2m in local Beijing hours, rh/wind/dpt in UTC hours); record raw
+# values without conversion. See docs/瓦片背景场时效与分辨率调查记录.md.
+TILE_URL_PATTERN = re.compile(
+    r"/data/(?P<product>[^/]+)/(?P<version>[^/]+)/(?P<run>\d{10})"
+    r"/(?P<year>\d{4})/(?P<month>\d{2})/(?P<day>\d{2})/(?P<hour>\d{2})"
+    r"/(?P<z>\d+)/(?P<x>\d+)/(?P<y>\d+)/(?P<layer>[a-z0-9-]+)\.jpg$"
+)
+
+
+def parse_tile_url(url: str) -> dict | None:
+    """Parse model run time, tile valid time and z/x/y out of a QWeather tile URL."""
+    match = TILE_URL_PATTERN.search(url)
+    if not match:
+        return None
+    g = match.groupdict()
+    return {
+        "run_time": g["run"],
+        "valid_time": f"{g['year']}-{g['month']}-{g['day']}T{g['hour']}:00",
+        "z": int(g["z"]),
+        "x": int(g["x"]),
+        "y": int(g["y"]),
+    }
 
 
 def decode_qweather_tile(content: bytes, variable_name: str) -> tuple[np.ndarray, dict]:
@@ -94,39 +123,60 @@ def sample_tile_at_coords(
     return sampled
 
 
+def load_cached_tiles(max_age_seconds: int = 3600) -> dict[str, dict] | None:
+    """Read tiles from the disk cache only; never launch a browser.
+
+    Returns the tile dict (url/body/z/x/y per layer) when a fresh capture exists,
+    otherwise None. Safe to call inside request handlers.
+    """
+    meta_cache_file = TILE_CACHE_DIR / "tile_metadata_latest.json"
+    if not meta_cache_file.exists():
+        return None
+    try:
+        with open(meta_cache_file, "r", encoding="utf-8") as f:
+            cached_meta = json.load(f)
+        cached_time = datetime.fromisoformat(cached_meta.get("captured_at", "2000-01-01T00:00:00+00:00"))
+        age_sec = (datetime.now(timezone.utc) - cached_time).total_seconds()
+        if age_sec >= max_age_seconds:
+            return None
+        logger.info("Using cached CloakBrowser tiles (age: %.1f min)", age_sec / 60)
+        result = {}
+        for var, info in cached_meta.get("tiles", {}).items():
+            tile_path = TILE_CACHE_DIR / f"{var}.bin"
+            if tile_path.exists():
+                result[var] = {
+                    "url": info["url"],
+                    "body": tile_path.read_bytes(),
+                    "z": info["z"],
+                    "x": info["x"],
+                    "y": info["y"],
+                    "run_time": info.get("run_time"),
+                    "valid_time": info.get("valid_time"),
+                }
+        return result or None
+    except Exception as e:
+        logger.warning("Failed to load cached tile metadata: %s", e)
+        return None
+
+
 def capture_tiles_with_cloak(
     headless: bool = True,
     timeout_ms: int = 30000,
     force_refresh: bool = False
 ) -> dict[str, dict]:
-    """Launch CloakBrowser, simulate layer switches, and intercept live tiles."""
+    """Launch CloakBrowser, simulate layer switches, and intercept live tiles.
+
+    Heavy operation (browser automation, up to tens of seconds): only call from
+    background tasks or the explicit maintenance endpoint, never from map/adjustment
+    query handlers — those must use :func:`load_cached_tiles` instead.
+    """
     TILE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     meta_cache_file = TILE_CACHE_DIR / "tile_metadata_latest.json"
 
-    # Check if cached tile exists from within last 1 hour
-    if meta_cache_file.exists() and not force_refresh:
-        try:
-            with open(meta_cache_file, "r", encoding="utf-8") as f:
-                cached_meta = json.load(f)
-            cached_time = datetime.fromisoformat(cached_meta.get("captured_at", "2000-01-01T00:00:00+00:00"))
-            age_sec = (datetime.now(timezone.utc) - cached_time).total_seconds()
-            if age_sec < 3600:  # Fresh within 1h
-                logger.info("Using cached CloakBrowser tiles (age: %.1f min)", age_sec / 60)
-                result = {}
-                for var, info in cached_meta.get("tiles", {}).items():
-                    tile_path = TILE_CACHE_DIR / f"{var}.bin"
-                    if tile_path.exists():
-                        result[var] = {
-                            "url": info["url"],
-                            "body": tile_path.read_bytes(),
-                            "z": info["z"],
-                            "x": info["x"],
-                            "y": info["y"]
-                        }
-                if result:
-                    return result
-        except Exception as e:
-            logger.warning("Failed to load cached tile metadata: %s", e)
+    if not force_refresh:
+        cached = load_cached_tiles()
+        if cached:
+            return cached
 
     import cloakbrowser
 
@@ -146,24 +196,32 @@ def capture_tiles_with_cloak(
 
     def on_res(res):
         url = res.url
-        if "tiles.qweather.com/data" in url and url.endswith(".jpg"):
-            layer_code = url.split("/")[-1].replace(".jpg", "")
-            body = b""
+        if "tiles.qweather.com/data" not in url or not url.endswith(".jpg"):
+            return
+        layer_code = url.split("/")[-1].replace(".jpg", "")
+        parsed = parse_tile_url(url)
+        # The same layer is requested at several zoom levels (including low-zoom
+        # ancestor tiles of the target tile). Keep the highest-zoom response per
+        # layer; a later coarse ancestor must not overwrite a detailed city tile.
+        existing = intercepted.get(layer_code)
+        if parsed and existing and existing.get("parsed") and parsed["z"] < existing["parsed"]["z"]:
+            return
+        body = b""
+        try:
+            if res.ok:
+                body = res.body()
+        except Exception:
+            pass
+        if not body:
+            import urllib.request
             try:
-                if res.ok:
-                    body = res.body()
+                req = urllib.request.Request(url, headers={"User-Agent": "ShanghaiHeatResearch/1.0"})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    body = resp.read()
             except Exception:
                 pass
-            if not body:
-                import urllib.request
-                try:
-                    req = urllib.request.Request(url, headers={"User-Agent": "ShanghaiHeatResearch/1.0"})
-                    with urllib.request.urlopen(req, timeout=8) as resp:
-                        body = resp.read()
-                except Exception:
-                    pass
-            if body:
-                intercepted[layer_code] = {"url": url, "body": body}
+        if body:
+            intercepted[layer_code] = {"url": url, "body": body, "parsed": parsed}
 
     page.on("response", on_res)
 
@@ -190,23 +248,29 @@ def capture_tiles_with_cloak(
     }
 
     for key, data in intercepted.items():
-        # Parse z, x, y from URL
-        parts = data["url"].split("/")
-        filename = parts[-1]
-        try:
-            file_idx = parts.index(filename)
-            y = int(parts[file_idx - 1])
-            x = int(parts[file_idx - 2])
-            z = int(parts[file_idx - 3])
-        except Exception:
-            z, x, y = 8, 214, 106  # Default Shanghai level 8 tile coordinates
+        parsed = data.get("parsed")
+        if parsed:
+            z, x, y = parsed["z"], parsed["x"], parsed["y"]
+        else:
+            # Parse z, x, y from URL
+            parts = data["url"].split("/")
+            filename = parts[-1]
+            try:
+                file_idx = parts.index(filename)
+                y = int(parts[file_idx - 1])
+                x = int(parts[file_idx - 2])
+                z = int(parts[file_idx - 3])
+            except Exception:
+                z, x, y = 8, 214, 106  # Default Shanghai level 8 tile coordinates
 
         output_tiles[key] = {
             "url": data["url"],
             "body": data["body"],
             "z": z,
             "x": x,
-            "y": y
+            "y": y,
+            "run_time": parsed["run_time"] if parsed else None,
+            "valid_time": parsed["valid_time"] if parsed else None,
         }
 
         # Cache binary to disk
@@ -214,6 +278,8 @@ def capture_tiles_with_cloak(
         saved_meta["tiles"][key] = {
             "url": data["url"],
             "z": z, "x": x, "y": y,
+            "run_time": parsed["run_time"] if parsed else None,
+            "valid_time": parsed["valid_time"] if parsed else None,
             "size": len(data["body"])
         }
 

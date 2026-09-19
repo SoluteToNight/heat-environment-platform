@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 import pyproj
 import rasterio
+from app.schemas.common import format_utc_z
 
 # Fix PROJ_DATA if needed
 try:
@@ -156,8 +157,8 @@ def list_scene_releases(db: Session, scene_id: str) -> list[ReleaseItem]:
                 release_id=r.id,
                 product_id=r.product_id,
                 model_source=r.model_source,
-                time_start=r.time_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                time_end=r.time_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                time_start=format_utc_z(r.time_start),
+                time_end=format_utc_z(r.time_end),
                 freshness=freshness,
                 availability=r.availability,
             )
@@ -278,7 +279,7 @@ def create_fixed_view(db: Session, req: CreateViewRequest) -> ViewResponse:
                     "temporal_support": (release.raw_meta or {}).get('temporal_support'),
                     "attributions": (release.raw_meta or {}).get('attributions', []),
                     "forecast_location": {'longitude': (release.raw_meta or {}).get('longitude'), 'latitude': (release.raw_meta or {}).get('latitude')},
-                    "source_release_computed_at": release.computed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "source_release_computed_at": format_utc_z(release.computed_at),
                 },
             )
         )
@@ -286,10 +287,10 @@ def create_fixed_view(db: Session, req: CreateViewRequest) -> ViewResponse:
     return ViewResponse(
         view_id=env_view.id,
         scene_id=env_view.scene_id,
-        requested_time=env_view.requested_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        resolved_time=env_view.resolved_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        requested_time=format_utc_z(env_view.requested_time),
+        resolved_time=format_utc_z(env_view.resolved_time),
         variables=var_details,
-        expires_at=env_view.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=format_utc_z(env_view.expires_at),
     )
 
 
@@ -395,7 +396,7 @@ def get_point_reading(db: Session, view_id: str, lon: float, lat: float) -> Poin
         view_id=view.id,
         lon=lon,
         lat=lat,
-        target_time=view.resolved_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        target_time=format_utc_z(view.resolved_time),
         readings=readings,
         elevation_m=elevation_m,
         slope_deg=slope_deg,
@@ -458,7 +459,7 @@ def get_series_readings(
 
         steps.append(
             SeriesTimeStep(
-                time=r.target_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                time=format_utc_z(r.target_time),
                 values=v_map,
                 status=s_map,
             )

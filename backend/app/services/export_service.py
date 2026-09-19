@@ -13,6 +13,7 @@ from app.config import settings
 from app.db.models import ExportRecord, SystemTask, UgcCheckIn, User, WeatherRecord, utc_now
 from app.schemas.export import CreateExportRequest, ExportStatusResponse
 from app.services.env_service import get_fixed_view
+from app.schemas.common import format_utc_z
 
 
 def sanitize_csv_value(val: Any) -> str:
@@ -130,7 +131,7 @@ def process_export_task(db: Session, export_id: str, req_params: dict):
                     ])
                     for r in records:
                         writer.writerow([
-                            r.target_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            format_utc_z(r.target_time),
                             r.lon,
                             r.lat,
                             sanitize_csv_value(r.temperature_2m),
@@ -159,7 +160,7 @@ def process_export_task(db: Session, export_id: str, req_params: dict):
                         "geometry": {"type": "Point", "coordinates": [item.exact_lon, item.exact_lat]},
                         "properties": {
                             "check_in_id": item.id,
-                            "experienced_at": item.experienced_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "experienced_at": format_utc_z(item.experienced_at),
                             "thermal_sensation": item.thermal_sensation,
                             "thermal_comfort": item.thermal_comfort,
                             "setting": item.setting,
@@ -184,7 +185,7 @@ def process_export_task(db: Session, export_id: str, req_params: dict):
                     for item in items:
                         writer.writerow([
                             item.id,
-                            item.experienced_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            format_utc_z(item.experienced_at),
                             item.exact_lon,
                             item.exact_lat,
                             item.thermal_sensation,
@@ -221,7 +222,7 @@ def process_export_task(db: Session, export_id: str, req_params: dict):
                 for item in items:
                     writer.writerow([
                         item.id,
-                        item.experienced_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        format_utc_z(item.experienced_at),
                         item.coarse_lon,
                         item.coarse_lat,
                         item.public_location_precision,
@@ -279,5 +280,5 @@ def get_export_status(db: Session, export_id: str, user: User) -> ExportStatusRe
         file_size_bytes=rec.file_size_bytes,
         download_url=download_url,
         sha256_hash=rec.sha256_hash,
-        expires_at=rec.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=format_utc_z(rec.expires_at),
     )

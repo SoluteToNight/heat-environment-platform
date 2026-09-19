@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import ExportRecord, utc_now
 from app.db.session import get_db
-from app.schemas.common import make_api_response
+from app.schemas.common import format_utc_z, make_api_response
 from app.schemas.export import CreateExportRequest
 from app.services.auth_service import get_current_user
 from app.services.export_service import create_export_job, get_export_status, process_export_task
@@ -40,7 +40,7 @@ def post_export(
             "status": export_rec.status,
             "export_type": export_rec.export_type,
             "file_format": export_rec.file_format,
-            "expires_at": export_rec.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": format_utc_z(export_rec.expires_at),
         },
         request_id,
     )

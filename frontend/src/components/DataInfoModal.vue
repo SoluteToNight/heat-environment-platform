@@ -6,6 +6,7 @@ defineProps<{ open: boolean }>();
 const emit = defineEmits<{
   close: [];
   openForecast: [];
+  openHeatPerception: [];
 }>();
 </script>
 
@@ -76,7 +77,7 @@ const emit = defineEmits<{
           </div>
           <button
             type="button"
-            class="button-primary shrink-0 text-xs py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
+            class="button-primary shrink-0 text-xs! py-1.5! px-3! bg-blue-600! hover:bg-blue-700! text-white shadow-xs cursor-pointer flex items-center gap-1.5"
             @click="emit('openForecast')"
           >
             <AppIcon name="sliders" :size="14" />
@@ -94,6 +95,27 @@ const emit = defineEmits<{
         <p class="mt-2 text-xs leading-6 text-muted">
           用户提交的主观热感知（冷、凉、中性、偏热、很热）打卡记录，遵循差分空间脱敏规则：在 EPSG:32651（UTM Zone 51N）投影坐标系中，按 200 米规则网格将原始坐标对齐至所在网格的几何中心点，再逆变换回 WGS84（EPSG:4326）予以公开展示与聚合统计。精确打卡坐标仅由本人登录后可见。
         </p>
+
+        <!-- 主客观热暴露反演与应急决策看板入口 -->
+        <div class="mt-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50/90 p-3 shadow-2xs">
+          <div class="space-y-0.5">
+            <div class="flex items-center gap-1.5 text-xs font-semibold text-amber-950">
+              <span>上海主客观热暴露反演与分级应急决策看板</span>
+              <span class="rounded bg-orange-200 px-1.5 py-0.2 text-[10px] font-medium text-orange-900">24h 实时验证</span>
+            </div>
+            <p class="text-[11px] text-amber-900/80 leading-normal">
+              497 微环境修正网格、UTCI 生物气象指标、真实 UGC 打卡盲测闭环检验、13 幅全域决策专题图与分级应急响应
+            </p>
+          </div>
+          <button
+            type="button"
+            class="button-primary shrink-0 text-xs! py-1.5! px-3! bg-amber-600! hover:bg-amber-700! text-white shadow-xs cursor-pointer flex items-center gap-1.5"
+            @click="emit('openHeatPerception')"
+          >
+            <AppIcon name="sun" :size="14" />
+            <span>打开热暴露决策看板</span>
+          </button>
+        </div>
       </section>
 
       <!-- 4. 城市多源空间地理底图 -->

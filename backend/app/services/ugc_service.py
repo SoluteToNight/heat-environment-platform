@@ -22,6 +22,7 @@ from app.schemas.check_in import (
     MatchedEnvironment,
 )
 from app.services.env_service import is_inside_shanghai, parse_rfc3339_utc
+from app.schemas.common import format_utc_z
 from app.services.weather_service import configured_product_id
 
 # Pre-initialize projections
@@ -220,7 +221,7 @@ def get_check_in_by_id(db: Session, check_in_id: str, current_user: Optional[Use
             public_location_precision=item.public_location_precision,
             location_source=item.location_source,
             horizontal_accuracy_m=item.horizontal_accuracy_m,
-            experienced_at=item.experienced_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            experienced_at=format_utc_z(item.experienced_at),
             time_source=item.time_source,
             time_uncertainty_minutes=item.time_uncertainty_minutes,
             thermal_sensation=item.thermal_sensation,
@@ -234,8 +235,8 @@ def get_check_in_by_id(db: Session, check_in_id: str, current_user: Optional[Use
             revision=item.revision,
             match_status=item.match_status,
             matched_environment=matched_env,
-            created_at=item.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            updated_at=item.updated_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            created_at=format_utc_z(item.created_at),
+            updated_at=format_utc_z(item.updated_at),
         )
 
     # Otherwise must be public and published
@@ -250,14 +251,14 @@ def get_check_in_by_id(db: Session, check_in_id: str, current_user: Optional[Use
         scene_id=item.scene_id,
         location=GeoPoint(coordinates=[item.coarse_lon, item.coarse_lat]),
         public_location_precision=item.public_location_precision,
-        experienced_at=item.experienced_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        experienced_at=format_utc_z(item.experienced_at),
         thermal_sensation=item.thermal_sensation,
         thermal_comfort=item.thermal_comfort,
         setting=item.setting,
         activity=item.activity,
         sun_exposure=item.sun_exposure,
         note=item.note,
-        created_at=item.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        created_at=format_utc_z(item.created_at),
     )
 
 
@@ -300,14 +301,14 @@ def list_public_check_ins(
             scene_id=i.scene_id,
             location=GeoPoint(coordinates=[i.coarse_lon, i.coarse_lat]),
             public_location_precision=i.public_location_precision,
-            experienced_at=i.experienced_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            experienced_at=format_utc_z(i.experienced_at),
             thermal_sensation=i.thermal_sensation,
             thermal_comfort=i.thermal_comfort,
             setting=i.setting,
             activity=i.activity,
             sun_exposure=i.sun_exposure,
             note=i.note,
-            created_at=i.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            created_at=format_utc_z(i.created_at),
         )
         for i in items
     ]
@@ -353,7 +354,7 @@ def list_my_check_ins(
                 public_location_precision=item.public_location_precision,
                 location_source=item.location_source,
                 horizontal_accuracy_m=item.horizontal_accuracy_m,
-                experienced_at=item.experienced_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                experienced_at=format_utc_z(item.experienced_at),
                 time_source=item.time_source,
                 time_uncertainty_minutes=item.time_uncertainty_minutes,
                 thermal_sensation=item.thermal_sensation,
@@ -367,8 +368,8 @@ def list_my_check_ins(
                 revision=item.revision,
                 match_status=item.match_status,
                 matched_environment=matched_env,
-                created_at=item.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                updated_at=item.updated_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                created_at=format_utc_z(item.created_at),
+                updated_at=format_utc_z(item.updated_at),
             )
         )
     return res
@@ -401,7 +402,37 @@ def update_check_in(
             detail=f"Revision conflict. Server revision is {item.revision}",
         )
 
-    # Apply updates
+    location_or_time_changed = False
+
+    # Location and time edits reuse the create-time boundary and future-time validation
+    if req.location is not None:
+        coordinates = req.location.coordinates
+        if len(coordinates) != 2 or not is_inside_shanghai(coordinates[0], coordinates[1]):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid location: expected [lon, lat] inside the Shanghai scene boundary",
+            )
+        item.exact_lon, item.exact_lat = coordinates
+        if req.location_source is not None:
+            item.location_source = req.location_source
+        item.horizontal_accuracy_m = req.horizontal_accuracy_m
+        location_or_time_changed = True
+
+    if req.experienced_at is not None:
+        exp_dt = req.experienced_at
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=datetime.timezone.utc)
+        if exp_dt > utc_now() + datetime.timedelta(minutes=5):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Experience time in the future beyond 5 minutes tolerance is rejected",
+            )
+        item.experienced_at = exp_dt
+        if req.time_source is not None:
+            item.time_source = req.time_source
+        item.time_uncertainty_minutes = req.time_uncertainty_minutes
+        location_or_time_changed = True
+
     if req.thermal_sensation is not None:
         if req.thermal_sensation not in VALID_SENSATIONS:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid sensation")
@@ -430,10 +461,16 @@ def update_check_in(
 
     if req.public_location_precision is not None:
         item.public_location_precision = req.public_location_precision
-        if req.public_location_precision == "exact":
-            item.coarse_lon, item.coarse_lat = item.exact_lon, item.exact_lat
-        else:
-            item.coarse_lon, item.coarse_lat = compute_coarse_200m_point(item.exact_lon, item.exact_lat)
+
+    # The public geometry is always derived from the current exact point at the active precision
+    if item.public_location_precision == "exact":
+        item.coarse_lon, item.coarse_lat = item.exact_lon, item.exact_lat
+    else:
+        item.coarse_lon, item.coarse_lat = compute_coarse_200m_point(item.exact_lon, item.exact_lat)
+
+    if location_or_time_changed:
+        # The previously matched environment no longer describes this record
+        item.match_status = "pending"
 
     item.revision += 1
     item.updated_at = utc_now()
@@ -541,8 +578,22 @@ def report_check_in(
     reason: str,
     idempotency_key: str,
 ):
+    """Intake only: persist the report as 'pending'. Adjudication lives outside this service."""
+    reason = (reason or "").strip()
+    if not reason:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A non-empty report reason is required",
+        )
+    if not idempotency_key or not idempotency_key.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Header 'Idempotency-Key' is required for reporting records",
+        )
+
     item = db.query(UgcCheckIn).filter(UgcCheckIn.id == check_in_id, UgcCheckIn.is_deleted.is_(False)).first()
-    if not item:
+    # Only publicly visible records can be reported, mirroring the read-side visibility rule
+    if not item or item.visibility != "public" or item.publication_status != "published":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
 
     existing = (
@@ -551,7 +602,12 @@ def report_check_in(
         .first()
     )
     if existing:
-        return existing
+        if existing.check_in_id == check_in_id and existing.reason == reason:
+            return existing
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Idempotency key reuse with differing payload",
+        )
 
     rep = UgcReport(
         check_in_id=check_in_id,

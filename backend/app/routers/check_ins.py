@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.check_in import CheckInCreateRequest, CheckInUpdateRequest, ReportCreateRequest
-from app.schemas.common import make_api_response
+from app.schemas.common import format_utc_z, make_api_response
 from app.services.auth_service import get_current_user, get_optional_current_user
 from app.services.ugc_service import (
     aggregate_check_ins,
@@ -170,7 +170,7 @@ def report_check_in_record(
             "report_id": report.id,
             "check_in_id": report.check_in_id,
             "status": report.status,
-            "created_at": report.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "created_at": format_utc_z(report.created_at),
         },
         request_id,
     )

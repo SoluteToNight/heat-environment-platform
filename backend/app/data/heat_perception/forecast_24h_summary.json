@@ -1,0 +1,407 @@
+{
+  "run_id": "inversion_24h_20260918_083045",
+  "forecast_issued_at": "2026-09-17T03:56:15.209336+00:00",
+  "city": "上海市",
+  "model_version": "heat-perception-v2-24h",
+  "scope": "conditional_hot_expression_probability",
+  "peak_risk_period": "最高风险出现在 2026-09-17 12:00 (提前2小时)，热感知概率为 25.4%",
+  "continuous_high_risk_hours": 0,
+  "hourly_records": [
+    {
+      "valid_time": "2026-09-17 11:00",
+      "lead_hours": 1,
+      "air_temperature_c": 25.18,
+      "relative_humidity_pct": 64.5,
+      "wind_speed_10m_ms": 4.94,
+      "utci_c": 26.25,
+      "utci_stress_level": "中等热应激",
+      "utci_stress_code": "moderate_heat_stress",
+      "hot_expression_probability": 0.1939,
+      "risk_level": "moderate",
+      "confidence_level": "high",
+      "decision_messages": [
+        "处于中等热感知区间：人体有温热或出汗感觉，适度增加水分摄入",
+        "日常出行建议携带遮阳伞/遮阳帽，留意老人与儿童体温调节状况"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 12:00",
+      "lead_hours": 2,
+      "air_temperature_c": 25.09,
+      "relative_humidity_pct": 64.6,
+      "wind_speed_10m_ms": 4.85,
+      "utci_c": 27.82,
+      "utci_stress_level": "中等热应激",
+      "utci_stress_code": "moderate_heat_stress",
+      "hot_expression_probability": 0.2537,
+      "risk_level": "moderate",
+      "confidence_level": "high",
+      "decision_messages": [
+        "处于中等热感知区间：人体有温热或出汗感觉，适度增加水分摄入",
+        "日常出行建议携带遮阳伞/遮阳帽，留意老人与儿童体温调节状况"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 13:00",
+      "lead_hours": 3,
+      "air_temperature_c": 24.85,
+      "relative_humidity_pct": 64.6,
+      "wind_speed_10m_ms": 4.97,
+      "utci_c": 27.34,
+      "utci_stress_level": "中等热应激",
+      "utci_stress_code": "moderate_heat_stress",
+      "hot_expression_probability": 0.239,
+      "risk_level": "moderate",
+      "confidence_level": "high",
+      "decision_messages": [
+        "处于中等热感知区间：人体有温热或出汗感觉，适度增加水分摄入",
+        "日常出行建议携带遮阳伞/遮阳帽，留意老人与儿童体温调节状况"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 14:00",
+      "lead_hours": 4,
+      "air_temperature_c": 24.64,
+      "relative_humidity_pct": 67.7,
+      "wind_speed_10m_ms": 4.58,
+      "utci_c": 25.75,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.187,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 15:00",
+      "lead_hours": 5,
+      "air_temperature_c": 24.04,
+      "relative_humidity_pct": 70.2,
+      "wind_speed_10m_ms": 4.47,
+      "utci_c": 24.08,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.1419,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 16:00",
+      "lead_hours": 6,
+      "air_temperature_c": 23.88,
+      "relative_humidity_pct": 70.2,
+      "wind_speed_10m_ms": 4.54,
+      "utci_c": 21.64,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0947,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 17:00",
+      "lead_hours": 7,
+      "air_temperature_c": 23.86,
+      "relative_humidity_pct": 70.7,
+      "wind_speed_10m_ms": 4.47,
+      "utci_c": 20.04,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0713,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 18:00",
+      "lead_hours": 8,
+      "air_temperature_c": 23.79,
+      "relative_humidity_pct": 68.7,
+      "wind_speed_10m_ms": 4.13,
+      "utci_c": 18.88,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0569,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 19:00",
+      "lead_hours": 9,
+      "air_temperature_c": 23.85,
+      "relative_humidity_pct": 67.2,
+      "wind_speed_10m_ms": 5.13,
+      "utci_c": 17.38,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0434,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 20:00",
+      "lead_hours": 10,
+      "air_temperature_c": 23.77,
+      "relative_humidity_pct": 66.2,
+      "wind_speed_10m_ms": 4.7,
+      "utci_c": 17.61,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0416,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 21:00",
+      "lead_hours": 11,
+      "air_temperature_c": 23.83,
+      "relative_humidity_pct": 69.5,
+      "wind_speed_10m_ms": 5.29,
+      "utci_c": 17.37,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0376,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 22:00",
+      "lead_hours": 12,
+      "air_temperature_c": 23.19,
+      "relative_humidity_pct": 74.7,
+      "wind_speed_10m_ms": 4.44,
+      "utci_c": 17.58,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0364,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-17 23:00",
+      "lead_hours": 13,
+      "air_temperature_c": 23.92,
+      "relative_humidity_pct": 75.5,
+      "wind_speed_10m_ms": 4.56,
+      "utci_c": 18.63,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.04,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 00:00",
+      "lead_hours": 14,
+      "air_temperature_c": 23.84,
+      "relative_humidity_pct": 78.0,
+      "wind_speed_10m_ms": 4.34,
+      "utci_c": 18.94,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0406,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 01:00",
+      "lead_hours": 15,
+      "air_temperature_c": 23.95,
+      "relative_humidity_pct": 78.3,
+      "wind_speed_10m_ms": 4.84,
+      "utci_c": 18.58,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.038,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 02:00",
+      "lead_hours": 16,
+      "air_temperature_c": 23.59,
+      "relative_humidity_pct": 79.3,
+      "wind_speed_10m_ms": 4.87,
+      "utci_c": 18.06,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0354,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 03:00",
+      "lead_hours": 17,
+      "air_temperature_c": 23.65,
+      "relative_humidity_pct": 78.9,
+      "wind_speed_10m_ms": 5.17,
+      "utci_c": 17.83,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.035,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 04:00",
+      "lead_hours": 18,
+      "air_temperature_c": 23.74,
+      "relative_humidity_pct": 78.0,
+      "wind_speed_10m_ms": 5.05,
+      "utci_c": 18.03,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0374,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 05:00",
+      "lead_hours": 19,
+      "air_temperature_c": 23.77,
+      "relative_humidity_pct": 77.6,
+      "wind_speed_10m_ms": 4.89,
+      "utci_c": 18.2,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0403,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 06:00",
+      "lead_hours": 20,
+      "air_temperature_c": 23.81,
+      "relative_humidity_pct": 78.0,
+      "wind_speed_10m_ms": 4.84,
+      "utci_c": 18.38,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.044,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 07:00",
+      "lead_hours": 21,
+      "air_temperature_c": 24.07,
+      "relative_humidity_pct": 80.5,
+      "wind_speed_10m_ms": 4.85,
+      "utci_c": 19.49,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.0551,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 08:00",
+      "lead_hours": 22,
+      "air_temperature_c": 24.72,
+      "relative_humidity_pct": 78.1,
+      "wind_speed_10m_ms": 4.89,
+      "utci_c": 21.04,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.074,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 09:00",
+      "lead_hours": 23,
+      "air_temperature_c": 25.22,
+      "relative_humidity_pct": 75.4,
+      "wind_speed_10m_ms": 5.55,
+      "utci_c": 23.13,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.1085,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    },
+    {
+      "valid_time": "2026-09-18 10:00",
+      "lead_hours": 24,
+      "air_temperature_c": 25.65,
+      "relative_humidity_pct": 73.0,
+      "wind_speed_10m_ms": 5.61,
+      "utci_c": 24.33,
+      "utci_stress_level": "无热应激 (舒适)",
+      "utci_stress_code": "no_stress",
+      "hot_expression_probability": 0.1383,
+      "risk_level": "low",
+      "confidence_level": "high",
+      "decision_messages": [
+        "热环境处于无热应激或舒适区间，适宜各类户外文体与商贸休闲活动"
+      ]
+    }
+  ],
+  "key_action_recommendations": [
+    "关注24小时热感知波峰：预计在 2026-09-17 12:00 前后达到体感最热峰值",
+    "水体与绿化缓冲区可使主观热抱怨概率降低约 8%~15%，出行优先利用降温绿道",
+    "夜间气温回落，热感知概率降至舒适区间，适宜安排开窗通风与夜间休憩"
+  ],
+  "limitations": [
+    "概率输出针对历史公众微博热感觉表达样本条件建模，不代表流行病学医学患病绝对风险",
+    "本系统采用未来24小时逐小时数值预报与多历年一般化回归反演，未考虑局部超细微突发强风降温"
+  ]
+}

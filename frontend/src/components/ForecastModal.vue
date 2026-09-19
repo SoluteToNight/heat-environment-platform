@@ -330,7 +330,7 @@ async function handleSync() {
           >
             <span v-if="syncLoading" class="loader size-3 mr-1" />
             <AppIcon v-else name="settings" :size="14" />
-            <span>手动全网同步 (耗费100额度)</span>
+            <span>{{ syncLoading ? '正在全网同步 48h 预报...' : '手动全网同步 (耗费100额度)' }}</span>
           </button>
 
           <button

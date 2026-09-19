@@ -1,0 +1,490 @@
+{
+  "model_version": "heat-perception-v2-24h",
+  "training_sample_size": 4998,
+  "test_sample_size": 620,
+  "sampling_strategy": "从2024年2,477条合格记录中，按月份(6-9月)与热感知类别(0-4)分层抽取25%(620条)作为测试集；剩余1,857条与2019-2023数据合并用于生产训练",
+  "pooled_spatial_m1_auc": 0.7594,
+  "test_2024_m1_auc": 0.7325,
+  "test_2024_pure_extrap_m1_auc": 0.7265,
+  "environmental_effects": [
+    {
+      "variable": "green_fraction",
+      "coefficient": 0.671,
+      "odds_ratio": 1.0694,
+      "ci95_lower": 1.0114,
+      "ci95_upper": 1.1304,
+      "unit_change": "+10%覆盖率",
+      "interpretation": "绿地覆盖率增加10个百分点的主观热感知变化"
+    },
+    {
+      "variable": "water_fraction",
+      "coefficient": -1.7391,
+      "odds_ratio": 0.8404,
+      "ci95_lower": 0.8087,
+      "ci95_upper": 0.9363,
+      "unit_change": "+10%覆盖率",
+      "interpretation": "水体覆盖率增加10个百分点对主观热抱怨的显著抑制作用"
+    },
+    {
+      "variable": "building_fraction",
+      "coefficient": -0.6139,
+      "odds_ratio": 0.9405,
+      "ci95_lower": 0.8313,
+      "ci95_upper": 1.0659,
+      "unit_change": "+10%覆盖率",
+      "interpretation": "建筑覆盖率增加10个百分点的局部遮阴及空调缓冲效应"
+    }
+  ],
+  "metrics_table": [
+    {
+      "model": "M0",
+      "split_type": "2024抽样测试集 (生产模型评估)",
+      "auc_roc": 0.7284,
+      "brier_score": 0.2101,
+      "log_loss": 0.6082
+    },
+    {
+      "model": "M1",
+      "split_type": "2024抽样测试集 (生产模型评估)",
+      "auc_roc": 0.7325,
+      "brier_score": 0.2081,
+      "log_loss": 0.6043
+    },
+    {
+      "model": "HistGBDT",
+      "split_type": "2024抽样测试集 (生产模型评估)",
+      "auc_roc": 0.7362,
+      "brier_score": 0.2105,
+      "log_loss": 0.6205
+    },
+    {
+      "model": "RandomForest",
+      "split_type": "2024抽样测试集 (生产模型评估)",
+      "auc_roc": 0.7422,
+      "brier_score": 0.2044,
+      "log_loss": 0.5964
+    },
+    {
+      "model": "M0",
+      "split_type": "2024抽样测试集 (纯时间外推 2019-2023训练)",
+      "auc_roc": 0.7234,
+      "brier_score": 0.2121,
+      "log_loss": 0.6132
+    },
+    {
+      "model": "M1",
+      "split_type": "2024抽样测试集 (纯时间外推 2019-2023训练)",
+      "auc_roc": 0.7265,
+      "brier_score": 0.2104,
+      "log_loss": 0.6099
+    },
+    {
+      "model": "M1 (含2021敏感性)",
+      "split_type": "2024抽样测试集 (纯时间外推 2019-2023训练)",
+      "auc_roc": 0.7231,
+      "brier_score": 0.2116,
+      "log_loss": 0.6124
+    },
+    {
+      "model": "M0",
+      "split_type": "5-Fold空间留出 (折1)",
+      "auc_roc": 0.7819,
+      "brier_score": 0.197,
+      "log_loss": 0.5787
+    },
+    {
+      "model": "M1",
+      "split_type": "5-Fold空间留出 (折1)",
+      "auc_roc": 0.7895,
+      "brier_score": 0.1874,
+      "log_loss": 0.5553
+    },
+    {
+      "model": "M0",
+      "split_type": "5-Fold空间留出 (折2)",
+      "auc_roc": 0.7773,
+      "brier_score": 0.193,
+      "log_loss": 0.5724
+    },
+    {
+      "model": "M1",
+      "split_type": "5-Fold空间留出 (折2)",
+      "auc_roc": 0.7753,
+      "brier_score": 0.1922,
+      "log_loss": 0.5699
+    },
+    {
+      "model": "M0",
+      "split_type": "5-Fold空间留出 (折3)",
+      "auc_roc": 0.7608,
+      "brier_score": 0.1977,
+      "log_loss": 0.5802
+    },
+    {
+      "model": "M1",
+      "split_type": "5-Fold空间留出 (折3)",
+      "auc_roc": 0.7654,
+      "brier_score": 0.197,
+      "log_loss": 0.5785
+    },
+    {
+      "model": "M0",
+      "split_type": "5-Fold空间留出 (折4)",
+      "auc_roc": 0.7352,
+      "brier_score": 0.2092,
+      "log_loss": 0.6058
+    },
+    {
+      "model": "M1",
+      "split_type": "5-Fold空间留出 (折4)",
+      "auc_roc": 0.7385,
+      "brier_score": 0.2091,
+      "log_loss": 0.606
+    },
+    {
+      "model": "M0",
+      "split_type": "5-Fold空间留出 (折5)",
+      "auc_roc": 0.7169,
+      "brier_score": 0.2174,
+      "log_loss": 0.6259
+    },
+    {
+      "model": "M1",
+      "split_type": "5-Fold空间留出 (折5)",
+      "auc_roc": 0.7213,
+      "brier_score": 0.2141,
+      "log_loss": 0.6175
+    },
+    {
+      "model": "M0",
+      "split_type": "5-Fold空间留出 (池化总计)",
+      "auc_roc": 0.7515,
+      "brier_score": 0.2027,
+      "log_loss": 0.5923
+    },
+    {
+      "model": "M1",
+      "split_type": "5-Fold空间留出 (池化总计)",
+      "auc_roc": 0.7594,
+      "brier_score": 0.1997,
+      "log_loss": 0.5849
+    }
+  ],
+  "coefficients_table": [
+    {
+      "variable": "sampled_utci_c",
+      "coefficient": 0.0303,
+      "odds_ratio": 1.0308,
+      "ci95_lower": 0.9023,
+      "ci95_upper": 1.1712,
+      "unit_change": "+1.0单位",
+      "interpretation": "UTCI每上升1℃带来的热抱怨基础对数几率变化"
+    },
+    {
+      "variable": "utci_squared",
+      "coefficient": 0.3095,
+      "odds_ratio": 1.3628,
+      "ci95_lower": 1.1035,
+      "ci95_upper": 1.6836,
+      "unit_change": "+1.0单位",
+      "interpretation": "UTCI高值非线性加速效应（极高温端热感知急剧恶化）"
+    },
+    {
+      "variable": "hour_sin",
+      "coefficient": -0.1016,
+      "odds_ratio": 0.9034,
+      "ci95_lower": 0.8145,
+      "ci95_upper": 1.0516,
+      "unit_change": "+1.0单位",
+      "interpretation": "日内小时正弦周期分量"
+    },
+    {
+      "variable": "hour_cos",
+      "coefficient": -0.2671,
+      "odds_ratio": 0.7656,
+      "ci95_lower": 0.7215,
+      "ci95_upper": 0.8402,
+      "unit_change": "+1.0单位",
+      "interpretation": "日内小时余弦周期分量"
+    },
+    {
+      "variable": "doy_sin",
+      "coefficient": 0.8736,
+      "odds_ratio": 2.3955,
+      "ci95_lower": 0.7343,
+      "ci95_upper": 9.1397,
+      "unit_change": "+1.0单位",
+      "interpretation": "控制变量"
+    },
+    {
+      "variable": "doy_cos",
+      "coefficient": -0.689,
+      "odds_ratio": 0.5021,
+      "ci95_lower": 0.1969,
+      "ci95_upper": 1.348,
+      "unit_change": "+1.0单位",
+      "interpretation": "控制变量"
+    },
+    {
+      "variable": "summer_progress",
+      "coefficient": 1.2513,
+      "odds_ratio": 3.4949,
+      "ci95_lower": 0.2778,
+      "ci95_upper": 60.2706,
+      "unit_change": "+1.0单位",
+      "interpretation": "盛夏阶段（7-8月）相比初夏与初秋的热敏累积效应"
+    },
+    {
+      "variable": "is_weekend",
+      "coefficient": -0.0029,
+      "odds_ratio": 0.9971,
+      "ci95_lower": 0.8682,
+      "ci95_upper": 1.1138,
+      "unit_change": "+1.0单位",
+      "interpretation": "控制变量"
+    },
+    {
+      "variable": "weekday_1",
+      "coefficient": -0.1502,
+      "odds_ratio": 0.8605,
+      "ci95_lower": 0.6699,
+      "ci95_upper": 1.0847,
+      "unit_change": "+1.0单位",
+      "interpretation": "控制变量"
+    },
+    {
+      "variable": "weekday_2",
+      "coefficient": -0.2292,
+      "odds_ratio": 0.7951,
+      "ci95_lower": 0.6336,
+      "ci95_upper": 1.1002,
+      "unit_change": "+1.0单位",
+      "interpretation": "控制变量"
+    },
+    {
+      "variable": "weekday_3",
+      "coefficient": -0.2123,
+      "odds_ratio": 0.8087,
+      "ci95_lower": 0.6239,
+      "ci95_upper": 1.074,
+      "unit_change": "+1.0单位",
+      "interpretation": "控制变量"
+    },
+    {
+      "variable": "weekday_4",
+      "coefficient": -0.2026,
+      "odds_ratio": 0.8166,
+      "ci95_lower": 0.5954,
+      "ci95_upper": 1.1916,
+      "unit_change": "+1.0单位",
+      "interpretation": "控制变量"
+    },
+    {
+      "variable": "weekday_5",
+      "coefficient": 0.013,
+      "odds_ratio": 1.0131,
+      "ci95_lower": 0.866,
+      "ci95_upper": 1.1402,
+      "unit_change": "+1.0单位",
+      "interpretation": "控制变量"
+    },
+    {
+      "variable": "weekday_6",
+      "coefficient": -0.0153,
+      "odds_ratio": 0.9848,
+      "ci95_lower": 0.8982,
+      "ci95_upper": 1.1095,
+      "unit_change": "+1.0单位",
+      "interpretation": "控制变量"
+    },
+    {
+      "variable": "green_fraction",
+      "coefficient": 0.671,
+      "odds_ratio": 1.0694,
+      "ci95_lower": 1.0114,
+      "ci95_upper": 1.1304,
+      "unit_change": "+10%覆盖率",
+      "interpretation": "绿地覆盖率增加10个百分点的主观热感知变化"
+    },
+    {
+      "variable": "water_fraction",
+      "coefficient": -1.7391,
+      "odds_ratio": 0.8404,
+      "ci95_lower": 0.8087,
+      "ci95_upper": 0.9363,
+      "unit_change": "+10%覆盖率",
+      "interpretation": "水体覆盖率增加10个百分点对主观热抱怨的显著抑制作用"
+    },
+    {
+      "variable": "building_fraction",
+      "coefficient": -0.6139,
+      "odds_ratio": 0.9405,
+      "ci95_lower": 0.8313,
+      "ci95_upper": 1.0659,
+      "unit_change": "+10%覆盖率",
+      "interpretation": "建筑覆盖率增加10个百分点的局部遮阴及空调缓冲效应"
+    }
+  ],
+  "calibration_table": [
+    {
+      "model": "M0",
+      "decile_bin": 1,
+      "sample_count": 19,
+      "unit_weight_sum": 19.0,
+      "predicted_probability": 0.08,
+      "observed_hot_fraction": 0.1579
+    },
+    {
+      "model": "M0",
+      "decile_bin": 2,
+      "sample_count": 45,
+      "unit_weight_sum": 45.0,
+      "predicted_probability": 0.1517,
+      "observed_hot_fraction": 0.1556
+    },
+    {
+      "model": "M0",
+      "decile_bin": 3,
+      "sample_count": 51,
+      "unit_weight_sum": 51.0,
+      "predicted_probability": 0.2473,
+      "observed_hot_fraction": 0.2941
+    },
+    {
+      "model": "M0",
+      "decile_bin": 4,
+      "sample_count": 55,
+      "unit_weight_sum": 55.0,
+      "predicted_probability": 0.3568,
+      "observed_hot_fraction": 0.3455
+    },
+    {
+      "model": "M0",
+      "decile_bin": 5,
+      "sample_count": 66,
+      "unit_weight_sum": 66.0,
+      "predicted_probability": 0.4537,
+      "observed_hot_fraction": 0.5909
+    },
+    {
+      "model": "M0",
+      "decile_bin": 6,
+      "sample_count": 98,
+      "unit_weight_sum": 97.5,
+      "predicted_probability": 0.5585,
+      "observed_hot_fraction": 0.4872
+    },
+    {
+      "model": "M0",
+      "decile_bin": 7,
+      "sample_count": 113,
+      "unit_weight_sum": 112.5,
+      "predicted_probability": 0.6499,
+      "observed_hot_fraction": 0.6178
+    },
+    {
+      "model": "M0",
+      "decile_bin": 8,
+      "sample_count": 99,
+      "unit_weight_sum": 99.0,
+      "predicted_probability": 0.7495,
+      "observed_hot_fraction": 0.697
+    },
+    {
+      "model": "M0",
+      "decile_bin": 9,
+      "sample_count": 71,
+      "unit_weight_sum": 71.0,
+      "predicted_probability": 0.8415,
+      "observed_hot_fraction": 0.8732
+    },
+    {
+      "model": "M0",
+      "decile_bin": 10,
+      "sample_count": 3,
+      "unit_weight_sum": 3.0,
+      "predicted_probability": 0.9104,
+      "observed_hot_fraction": 0.3333
+    },
+    {
+      "model": "M1",
+      "decile_bin": 1,
+      "sample_count": 20,
+      "unit_weight_sum": 20.0,
+      "predicted_probability": 0.0705,
+      "observed_hot_fraction": 0.1
+    },
+    {
+      "model": "M1",
+      "decile_bin": 2,
+      "sample_count": 43,
+      "unit_weight_sum": 43.0,
+      "predicted_probability": 0.149,
+      "observed_hot_fraction": 0.1628
+    },
+    {
+      "model": "M1",
+      "decile_bin": 3,
+      "sample_count": 61,
+      "unit_weight_sum": 61.0,
+      "predicted_probability": 0.2502,
+      "observed_hot_fraction": 0.2787
+    },
+    {
+      "model": "M1",
+      "decile_bin": 4,
+      "sample_count": 54,
+      "unit_weight_sum": 54.0,
+      "predicted_probability": 0.3508,
+      "observed_hot_fraction": 0.3704
+    },
+    {
+      "model": "M1",
+      "decile_bin": 5,
+      "sample_count": 68,
+      "unit_weight_sum": 68.0,
+      "predicted_probability": 0.4494,
+      "observed_hot_fraction": 0.5
+    },
+    {
+      "model": "M1",
+      "decile_bin": 6,
+      "sample_count": 94,
+      "unit_weight_sum": 94.0,
+      "predicted_probability": 0.5544,
+      "observed_hot_fraction": 0.5745
+    },
+    {
+      "model": "M1",
+      "decile_bin": 7,
+      "sample_count": 101,
+      "unit_weight_sum": 100.0,
+      "predicted_probability": 0.6519,
+      "observed_hot_fraction": 0.61
+    },
+    {
+      "model": "M1",
+      "decile_bin": 8,
+      "sample_count": 103,
+      "unit_weight_sum": 103.0,
+      "predicted_probability": 0.7521,
+      "observed_hot_fraction": 0.699
+    },
+    {
+      "model": "M1",
+      "decile_bin": 9,
+      "sample_count": 70,
+      "unit_weight_sum": 70.0,
+      "predicted_probability": 0.8428,
+      "observed_hot_fraction": 0.8714
+    },
+    {
+      "model": "M1",
+      "decile_bin": 10,
+      "sample_count": 6,
+      "unit_weight_sum": 6.0,
+      "predicted_probability": 0.9183,
+      "observed_hot_fraction": 0.6667
+    }
+  ]
+}

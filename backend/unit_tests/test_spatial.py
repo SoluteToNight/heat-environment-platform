@@ -16,6 +16,30 @@ from app.services.radiation_service import decode_tile, downscale_components
 from app.routers.spatial import series, export
 
 
+def test_utci_legend_uses_fixed_range(monkeypatch):
+    def reject_release_read(*args, **kwargs):
+        raise AssertionError('UTCI legend must stay on the fixed range, not frame percentiles')
+    monkeypatch.setattr(spatial, 'read_release', reject_release_read)
+    for frame in (0, 12, 47):
+        config = spatial.legend('utci', 'release-a', frame)
+        assert config['min'] == 15
+        assert config['max'] == 35
+        assert config == spatial.legend('utci', 'release-b', frame)
+
+
+def test_raster_cache_tracks_legend_and_preserves_nodata(tmp_path, monkeypatch):
+    monkeypatch.setattr(spatial, 'read_release', lambda run_id: (tmp_path, {'bbox': [121, 30, 122, 31]}))
+    monkeypatch.setattr(spatial, 'sample_release', lambda *args: {'utci': np.array([10., 45., np.nan, 27.5])})
+    original = spatial.raster_png('fixture', 'utci', 0, size=2)
+    pixels = np.array(Image.open(io.BytesIO(original)))
+    assert pixels[1, 0, 3] == 0
+    assert pixels[0, 0, 3] > 0
+    monkeypatch.setitem(spatial.VARIABLES, 'utci', ('UTCI', '°C', 10, 45, ['#000000', '#ffffff']))
+    updated = spatial.raster_png('fixture', 'utci', 0, size=2)
+    assert original != updated
+    assert len(list((tmp_path / 'raster_cache').glob('*.png'))) == 2
+
+
 def test_linear_field_and_no_extrapolation():
     points = np.array([[0, 0], [2, 0], [0, 2]])
     result = interpolate(points, [0, 4, 6], [[.5, .5], [3, 3]])

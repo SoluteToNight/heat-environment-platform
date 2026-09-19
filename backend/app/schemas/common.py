@@ -8,6 +8,15 @@ def utc_now_str() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def format_utc_z(value: datetime.datetime) -> str:
+    """timestamptz 字段 → UTC Z 文本。
+
+    必须先 astimezone(UTC) 再落 Z 后缀：psycopg2 按会话时区返回 aware datetime，
+    直接 strftime 加 Z 会把时刻错标 8 小时（评审报告 C2 同类问题）。
+    """
+    return value.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 T = TypeVar("T")
 
 

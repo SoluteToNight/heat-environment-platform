@@ -1,6 +1,8 @@
 import type * as CesiumTypes from 'cesium';
 import type { Coordinates, EnvironmentView, Layer, PublicCheckIn, Scene, Variable } from '../../services/contracts';
 import type { PreparedFrame } from '../../stores/workspace';
+import type { HeatRiskDataset, HeatRiskPresentation } from '../../services/heatRisk';
+import { HeatRiskLayer } from './heatRiskLayer';
 import { publicGrid, sensationNames } from '../../services/format';
 
 declare global { interface Window { Cesium: typeof CesiumTypes; CESIUM_BASE_URL: string } }
@@ -54,24 +56,31 @@ export class SceneAdapter {
   private marker?: CesiumTypes.Entity;
   private draft?: CesiumTypes.Entity;
   private destroyed = false;
-  private opacity = .75;
+  private opacity = .9;
   private canopyOpacity = 1;
   private demo = false;
   private requestId = 0;
   private terrainProvider?: CesiumTypes.TerrainProvider;
   private buildingEntities = new Map<string, CesiumTypes.Entity>();
   private buildingAccessTime = new Map<string, number>();
-  private buildingCenters = new Map<string, [number, number]>();
-  private rasterSampler: { data: Uint8ClampedArray; width: number; height: number; bbox: [number, number, number, number] } | null = null;
-  private activeLegendColors: string[] = [];
+  private basemap?: CesiumTypes.ImageryLayer;
+  private annotation?: CesiumTypes.ImageryLayer;
   private buildingApiUrl?: string;
   private buildingUpdateTimer?: ReturnType<typeof setTimeout>;
   private buildingAbortController?: AbortController;
   private buildingVisible = true;
-  private buildingOpacity = 0.88;
+  private buildingOpacity = 1;
   private clusterListenerAttached = false;
   private lastFetchedBbox: [number, number, number, number] | null = null;
   private lastFetchedMinHeight: number | undefined = undefined;
+  private demoDataSource?: CesiumTypes.CustomDataSource;
+  private demoEntities: CesiumTypes.Entity[] = [];
+  private demoGridParams: Array<{ row: number; column: number }> = [];
+  private imageryCache = new Map<string, CesiumTypes.ImageryLayer>();
+  private fadingLayer?: CesiumTypes.CustomDataSource | CesiumTypes.ImageryLayer;
+  private pendingHideCleanup?: () => void;
+  private heatRisk?: HeatRiskLayer;
+  private heatRiskActive = false;
   static async create(element: HTMLElement, config: Scene, layers: Layer[], callbacks: MapCallbacks) {
     const [cesium, token] = await Promise.all([loadRuntime(), fetchIonToken()]);
     if (token) {
@@ -93,15 +102,15 @@ export class SceneAdapter {
     }
     // Use native device pixel ratio up to 2.0x for razor-sharp rendering on High-DPI screens
     viewer.resolutionScale = Math.max(1.0, Math.min(window.devicePixelRatio || 1.0, 2.0));
-    viewer.scene.backgroundColor = cesium.Color.fromCssColorString('#e5ebe5');
-    viewer.scene.globe.baseColor = cesium.Color.fromCssColorString('#e5e9df');
+    viewer.scene.backgroundColor = cesium.Color.fromCssColorString('#edf0f2');
+    viewer.scene.globe.baseColor = cesium.Color.fromCssColorString('#edf0f2');
     if (viewer.scene.skyBox) viewer.scene.skyBox.show = false;
     if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false;
     if (viewer.scene.sun) viewer.scene.sun.show = false;
     if (viewer.scene.moon) viewer.scene.moon.show = false;
     viewer.clock.shouldAnimate = false;
-    viewer.shadowMap.darkness = .7;
-    viewer.scene.light.intensity = 1.8;
+    viewer.shadowMap.darkness = .3;
+    viewer.scene.light.intensity = 1.2;
     viewer.scene.postProcessStages.fxaa.enabled = true;
     viewer.scene.globe.enableLighting = false;
     viewer.scene.globe.depthTestAgainstTerrain = false;
@@ -123,9 +132,10 @@ export class SceneAdapter {
         credit: new cesium.Credit('© 国家地理信息公共服务平台 天地图 Tianditu', true),
       });
       const imagery = viewer.imageryLayers.addImageryProvider(basemap);
-      imagery.saturation = 0.8;
-      imagery.brightness = 1.0;
-      imagery.contrast = 1.05;
+      adapter.basemap = imagery;
+      imagery.saturation = 0.08;
+      imagery.brightness = 1.12;
+      imagery.contrast = 0.8;
 
       const annotation = new cesium.UrlTemplateImageryProvider({
         url: `https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${tiandituKey}`,
@@ -134,7 +144,8 @@ export class SceneAdapter {
         maximumLevel: 18,
       });
       const annotationLayer = viewer.imageryLayers.addImageryProvider(annotation);
-      annotationLayer.alpha = 1.0;
+      adapter.annotation = annotationLayer;
+      annotationLayer.alpha = 0.65;
 
       let failCount = 0;
       let reported = false;
@@ -168,70 +179,14 @@ export class SceneAdapter {
     return adapter;
   }
   private color(value: string, alpha = 1) { return this.cesium.Color.fromCssColorString(value).withAlpha(alpha); }
-  private async loadRasterImage(url: string, bbox: [number, number, number, number]) {
-    try {
-      if (typeof window === 'undefined' || typeof document === 'undefined') return null;
-      return await new Promise<{ data: Uint8ClampedArray; width: number; height: number; bbox: [number, number, number, number] } | null>((resolve) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          try {
-            const canvas = document.createElement('canvas');
-            canvas.width = img.naturalWidth || img.width || 512;
-            canvas.height = img.naturalHeight || img.height || 512;
-            const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            if (!ctx) { resolve(null); return; }
-            ctx.drawImage(img, 0, 0);
-            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            resolve({
-              data: imgData.data,
-              width: canvas.width,
-              height: canvas.height,
-              bbox,
-            });
-          } catch {
-            resolve(null);
-          }
-        };
-        img.onerror = () => resolve(null);
-        img.src = url;
-      });
-    } catch {
-      return null;
-    }
-  }
-  private getBuildingColorAt(lon: number, lat: number): CesiumTypes.Color {
-    const cesium = this.cesium;
-    if (this.rasterSampler) {
-      const { data, width, height, bbox } = this.rasterSampler;
-      const [west, south, east, north] = bbox;
-      const u = (lon - west) / (east - west);
-      const v = (north - lat) / (north - south);
-      if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
-        const px = Math.min(width - 1, Math.max(0, Math.floor(u * width)));
-        const py = Math.min(height - 1, Math.max(0, Math.floor(v * height)));
-        const idx = (py * width + px) * 4;
-        const r = data[idx]!;
-        const g = data[idx + 1]!;
-        const b = data[idx + 2]!;
-        const a = data[idx + 3]!;
-        if (a > 30) {
-          return cesium.Color.fromBytes(r, g, b, Math.round(this.buildingOpacity * 255));
-        }
-      }
-    }
-    if (this.activeLegendColors.length > 0) {
-      const midColor = this.activeLegendColors[Math.floor(this.activeLegendColors.length / 2)]!;
-      return this.color(midColor, this.buildingOpacity);
-    }
-    return this.color('#f3ece0', this.buildingOpacity);
+  private getBuildingColor(): CesiumTypes.Color {
+    return this.color('#d7d9dc', this.buildingOpacity);
   }
   private updateBuildingColors() {
     const cesium = this.cesium;
-    this.buildingEntities.forEach((entity, id) => {
-      const center = this.buildingCenters.get(id);
-      if (!center || !entity.polygon) return;
-      const color = this.getBuildingColorAt(center[0], center[1]);
+    this.buildingEntities.forEach(entity => {
+      if (!entity.polygon) return;
+      const color = this.getBuildingColor();
       entity.polygon.material = new cesium.ColorMaterialProperty(color);
     });
     this.render();
@@ -273,12 +228,12 @@ export class SceneAdapter {
         if (row === 4 && column >= 3) { this.rectangle(green, east - 10, north - 15, 240, 200, '#c1d0af'); continue; }
         for (let block = 0; block < 3; block++) {
           const height = 24 + ((row * 17 + column * 13 + block * 11) % 7) * 13;
-          this.rectangle(buildings, east + (block % 2) * 104, north + Math.floor(block / 2) * 98, 63 + ((row + block) % 3) * 10, 60 + ((column + block) % 3) * 12, block === 2 ? '#e9e9de' : '#faf9ef', height, '街区建筑');
+          this.rectangle(buildings, east + (block % 2) * 104, north + Math.floor(block / 2) * 98, 63 + ((row + block) % 3) * 10, 60 + ((column + block) % 3) * 12, block === 2 ? '#cfd2d5' : '#d7d9dc', height, '街区建筑');
         }
       }
     }
-    this.rectangle(buildings, -175, 330, 80, 95, '#faf9ef', 185, '概念塔楼');
-    this.rectangle(buildings, -75, 365, 64, 68, '#f4f5ed', 128, '概念塔楼');
+    this.rectangle(buildings, -175, 330, 80, 95, '#c9cdd1', 185, '概念塔楼');
+    this.rectangle(buildings, -75, 365, 64, 68, '#d3d6d9', 128, '概念塔楼');
     const canopy = this.group('canopy');
     for (let index = 0; index < 210; index++) {
       let east: number; let north: number;
@@ -312,7 +267,7 @@ export class SceneAdapter {
         if (asset.type === '3dtiles') {
           let tiles: CesiumTypes.Cesium3DTileset;
           if (asset.format === 'cesium-osm-buildings' || (!asset.url && layer.type === 'buildings')) {
-            tiles = await this.cesium.createOsmBuildingsAsync({ defaultColor: this.color('#ffffff', 0.20) });
+            tiles = await this.cesium.createOsmBuildingsAsync({ defaultColor: this.color('#d2d5d8', 1) });
           } else if (asset.url) {
             tiles = await this.cesium.Cesium3DTileset.fromUrl(asset.url);
           } else {
@@ -381,63 +336,172 @@ export class SceneAdapter {
   async prepare(view: EnvironmentView, variable: Variable): Promise<PreparedFrame> {
     const cesium = this.cesium;
     const item = view.items.find(value => value.variable === variable);
-    let source: CesiumTypes.CustomDataSource | CesiumTypes.ImageryLayer | null = null;
     const asset = item?.assets[0];
-    let nextSampler: { data: Uint8ClampedArray; width: number; height: number; bbox: [number, number, number, number] } | null = null;
-    if (item?.availability === 'available' && asset) {
-      if (asset.type === 'demo') {
-        source = new cesium.CustomDataSource('environment');
-        const hour = (new Date(item.resolved_time!).getUTCHours() + 8) % 24;
-        for (let row = 0; row < 19; row++) for (let column = 0; column < 20; column++) {
-          const east = -1450 + column * 100; const north = -1300 + row * 140;
-          if (east > 465 + Math.sin(north / 620) * 155) continue;
-          const fraction = Math.min(.98, Math.max(.02, .44 + Math.sin(column / 3 + row / 5) * .25 + Math.cos((hour - 14) * Math.PI / 12) * .17));
-          const scaled = fraction * (item.legend.colors.length - 1); const index = Math.floor(scaled);
-          const color = cesium.Color.lerp(this.color(item.legend.colors[index]!), this.color(item.legend.colors[Math.min(index + 1, item.legend.colors.length - 1)]!), scaled - index, new cesium.Color()).withAlpha(this.opacity);
-          source.entities.add({ polygon: { hierarchy: new cesium.PolygonHierarchy([[east, north], [east + 100, north], [east + 100, north + 140], [east, north + 140]].map(point => this.local(point[0]!, point[1]!))), height: .6, material: color, shadows: cesium.ShadowMode.DISABLED } });
-        }
-      } else if (asset.type === 'geojson' && asset.url) {
-        source = await cesium.GeoJsonDataSource.load(asset.url, { clampToGround: true });
-      } else if ((asset.type === 'image' || asset.type === 'xyz') && asset.url) {
-        if (asset.type === 'image' && asset.bbox) {
-          nextSampler = await this.loadRasterImage(asset.url, asset.bbox as [number, number, number, number]);
-        }
-        const provider = asset.type === 'image' ? await cesium.SingleTileImageryProvider.fromUrl(asset.url, { rectangle: asset.bbox ? cesium.Rectangle.fromDegrees(...asset.bbox) : undefined }) : new cesium.UrlTemplateImageryProvider({ url: asset.url, minimumLevel: asset.minimum_level, maximumLevel: asset.maximum_level });
-        source = new cesium.ImageryLayer(provider, { alpha: this.opacity, show: false });
-        source.minificationFilter = cesium.TextureMinificationFilter.LINEAR;
-        source.magnificationFilter = cesium.TextureMagnificationFilter.LINEAR;
-        this.viewer.imageryLayers.add(source);
-        if (asset.type === 'xyz') {
-          source.show = true; source.alpha = 0;
-          await this.waitForTiles();
-          source.show = false; source.alpha = this.opacity;
-        }
-      } else { throw new Error('当前环境图层格式暂不支持，已保留上一视图。'); }
+    if (!item || item.availability !== 'available' || !asset) {
+      return { commit: () => {}, dispose: () => {} };
     }
-    if (this.destroyed) { if (source instanceof cesium.ImageryLayer && !source.isDestroyed()) source.destroy(); throw new Error('场景已关闭'); }
-    const prepared = source;
-    let committed = false;
-    return {
-      commit: () => {
-        if (this.destroyed) return;
-        if (this.environment instanceof cesium.ImageryLayer) this.viewer.imageryLayers.remove(this.environment, true);
-        else if (this.environment) this.viewer.dataSources.remove(this.environment, true);
-        if (prepared instanceof cesium.ImageryLayer) {
-          prepared.show = true;
-          this.viewer.imageryLayers.raiseToTop(prepared);
-        } else if (prepared) {
-          void this.viewer.dataSources.add(prepared);
+
+    if (asset.type === 'demo') {
+      if (!this.demoDataSource || (this.demoDataSource as any).isDestroyed?.()) {
+        this.demoDataSource = new cesium.CustomDataSource('environment-demo');
+        this.demoEntities = [];
+        this.demoGridParams = [];
+        for (let row = 0; row < 19; row++) {
+          for (let column = 0; column < 20; column++) {
+            const east = -1450 + column * 100;
+            const north = -1300 + row * 140;
+            if (east > 465 + Math.sin(north / 620) * 155) continue;
+            const entity = this.demoDataSource.entities.add({
+              polygon: {
+                hierarchy: new cesium.PolygonHierarchy([[east, north], [east + 100, north], [east + 100, north + 140], [east, north + 140]].map(point => this.local(point[0]!, point[1]!))),
+                height: 0.6,
+                material: this.color(item.legend.colors[0] || '#ffffff', this.opacity),
+                shadows: cesium.ShadowMode.DISABLED,
+              },
+            });
+            this.demoEntities.push(entity);
+            this.demoGridParams.push({ row, column });
+          }
         }
-        this.environment = prepared; committed = true;
-        this.rasterSampler = nextSampler;
-        if (item?.legend?.colors) {
-          this.activeLegendColors = [...item.legend.colors];
+        void this.viewer.dataSources.add(this.demoDataSource);
+      }
+
+      const moment = new Date(view.requested_time);
+      const hour = ((moment.getUTCHours() + 8) % 24) + moment.getUTCMinutes() / 60;
+      const numColors = item.legend.colors.length;
+      const nextColors: CesiumTypes.Color[] = [];
+      for (let i = 0; i < this.demoGridParams.length; i++) {
+        const { row, column } = this.demoGridParams[i]!;
+        const fraction = Math.min(0.98, Math.max(0.02, 0.44 + Math.sin(column / 3 + row / 5) * 0.25 + Math.cos((hour - 14) * Math.PI / 12) * 0.17));
+        const scaled = fraction * (numColors - 1);
+        const index = Math.floor(scaled);
+        const color = cesium.Color.lerp(
+          this.color(item.legend.colors[index]!),
+          this.color(item.legend.colors[Math.min(index + 1, numColors - 1)]!),
+          scaled - index,
+          new cesium.Color(),
+        ).withAlpha(this.opacity);
+        nextColors.push(color);
+      }
+
+      return {
+        commit: () => {
+          if (this.destroyed) return;
+          for (let i = 0; i < this.demoEntities.length; i++) {
+            const entity = this.demoEntities[i];
+            const col = nextColors[i];
+            if (entity?.polygon && col) {
+              entity.polygon.material = new cesium.ColorMaterialProperty(col);
+            }
+          }
+          if (this.demoDataSource) this.demoDataSource.show = true;
+          this.environment = this.demoDataSource || null;
+          this.syncEnvironmentCarpet();
+          this.viewer.clock.currentTime = cesium.JulianDate.fromIso8601(view.requested_time);
+          this.render();
+        },
+        dispose: () => {},
+      };
+    }
+
+    if (asset.type === 'geojson' && asset.url) {
+      const source = await cesium.GeoJsonDataSource.load(asset.url, { clampToGround: true });
+      if (this.destroyed) return { commit: () => {}, dispose: () => {} };
+      return {
+        commit: () => {
+          if (this.destroyed) return;
+          if (this.environment && this.environment !== source) {
+            if (this.environment instanceof cesium.ImageryLayer) this.environment.show = false;
+            else this.viewer.dataSources.remove(this.environment, true);
+          }
+          void this.viewer.dataSources.add(source);
+          this.environment = source;
+          this.syncEnvironmentCarpet();
+          this.viewer.clock.currentTime = cesium.JulianDate.fromIso8601(view.requested_time);
+          this.render();
+        },
+        dispose: () => { if (!this.destroyed) this.viewer.dataSources.remove(source, true); },
+      };
+    }
+
+    if ((asset.type === 'image' || asset.type === 'xyz') && asset.url) {
+      let layer = this.imageryCache.get(asset.url);
+      if (!layer || (layer as any).isDestroyed?.()) {
+        const provider = asset.type === 'image'
+          ? await cesium.SingleTileImageryProvider.fromUrl(asset.url, { rectangle: asset.bbox ? cesium.Rectangle.fromDegrees(...asset.bbox) : undefined })
+          : new cesium.UrlTemplateImageryProvider({ url: asset.url, minimumLevel: asset.minimum_level, maximumLevel: asset.maximum_level });
+        if (this.destroyed) return { commit: () => {}, dispose: () => {} };
+        layer = new cesium.ImageryLayer(provider, { alpha: this.opacity, show: false });
+        layer.minificationFilter = cesium.TextureMinificationFilter.LINEAR;
+        layer.magnificationFilter = cesium.TextureMagnificationFilter.LINEAR;
+        this.viewer.imageryLayers.add(layer);
+        this.imageryCache.set(asset.url, layer);
+
+        if (this.imageryCache.size > 48) {
+          for (const [key, oldL] of this.imageryCache) {
+            if (oldL !== this.environment && oldL !== this.fadingLayer && oldL !== layer) {
+              this.viewer.imageryLayers.remove(oldL, true);
+              this.imageryCache.delete(key);
+              break;
+            }
+          }
         }
-        this.updateBuildingColors();
-        this.viewer.clock.currentTime = cesium.JulianDate.fromIso8601(view.requested_time); this.render();
-      },
-      dispose: () => { if (!committed && !this.destroyed && prepared instanceof cesium.ImageryLayer) this.viewer.imageryLayers.remove(prepared, true); },
-    };
+      }
+
+      const targetLayer = layer;
+      return {
+        commit: () => {
+          if (this.destroyed) return;
+          const oldEnv = this.environment;
+          targetLayer.show = true;
+          targetLayer.alpha = this.opacity;
+          this.viewer.imageryLayers.raiseToTop(targetLayer);
+          if (this.annotation) this.viewer.imageryLayers.raiseToTop(this.annotation);
+          this.environment = targetLayer;
+          this.syncEnvironmentCarpet();
+          this.viewer.clock.currentTime = cesium.JulianDate.fromIso8601(view.requested_time);
+
+          if (oldEnv && oldEnv !== targetLayer) {
+            if (this.pendingHideCleanup) {
+              this.pendingHideCleanup();
+              this.pendingHideCleanup = undefined;
+            }
+
+            this.fadingLayer = oldEnv;
+            let renderedFrames = 0;
+            const target = targetLayer;
+            const previous = oldEnv;
+
+            const cleanup = () => {
+              removePostRender();
+              if (this.fadingLayer === previous) this.fadingLayer = undefined;
+              this.pendingHideCleanup = undefined;
+              if (this.environment === target && previous && !(previous as any).isDestroyed?.()) {
+                previous.show = false;
+                this.render();
+              }
+            };
+
+            const removePostRender = this.viewer.scene.postRender.addEventListener(() => {
+              renderedFrames++;
+              if (renderedFrames >= 2) {
+                cleanup();
+              } else {
+                this.render();
+              }
+            });
+
+            this.pendingHideCleanup = cleanup;
+            setTimeout(cleanup, 220);
+          }
+
+          this.render();
+        },
+        dispose: () => {},
+      };
+    }
+
+    throw new Error('当前环境图层格式暂不支持，已保留上一视图。');
   }
   private waitForTiles() {
     return new Promise<void>((resolve, reject) => {
@@ -564,6 +628,9 @@ export class SceneAdapter {
         };
         return priority(b) - priority(a);
       });
+      // 色斑图按坐标反解所在网格，提供与网格一致的机制详情
+      const riskCell = this.heatRisk?.pickCell(coordinates);
+      if (riskCell) items.push({ name: riskCell.name, coordinates, layerId: 'heat_risk', properties: riskCell.properties });
       items.push({ name: '查询此处环境', coordinates });
       this.callbacks.pick(items);
     }, cesium.ScreenSpaceEventType.LEFT_CLICK);
@@ -598,15 +665,36 @@ export class SceneAdapter {
     }
     this.render();
   }
+  setPresentation(mode: 'analysis' | 'context') {
+    const analysis = mode === 'analysis';
+    if (this.basemap) {
+      this.basemap.saturation = analysis ? .08 : .35;
+      this.basemap.brightness = analysis ? 1.12 : 1.04;
+      this.basemap.contrast = analysis ? .8 : .95;
+    }
+    if (this.annotation) this.annotation.alpha = analysis ? .65 : .9;
+    this.setOpacity(analysis ? .9 : 0);
+    this.setBuildingOpacity(1);
+    this.render();
+  }
   setOpacity(value: number) {
     this.opacity = value;
     const environment = this.environment;
     if (environment instanceof this.cesium.ImageryLayer) environment.alpha = value;
-    else environment?.entities.values.forEach(entity => {
-      const material = entity.polygon?.material as CesiumTypes.ColorMaterialProperty;
-      const color = material?.color?.getValue(this.viewer.clock.currentTime);
-      if (color) entity.polygon!.material = new this.cesium.ColorMaterialProperty(color.withAlpha(value));
-    });
+    if (this.fadingLayer instanceof this.cesium.ImageryLayer) this.fadingLayer.alpha = value;
+    if (this.demoEntities.length) {
+      this.demoEntities.forEach(entity => {
+        const material = entity.polygon?.material as CesiumTypes.ColorMaterialProperty;
+        const color = material?.color?.getValue(this.viewer.clock.currentTime);
+        if (color) entity.polygon!.material = new this.cesium.ColorMaterialProperty(color.withAlpha(value));
+      });
+    } else if (environment && !(environment instanceof this.cesium.ImageryLayer)) {
+      environment.entities.values.forEach(entity => {
+        const material = entity.polygon?.material as CesiumTypes.ColorMaterialProperty;
+        const color = material?.color?.getValue(this.viewer.clock.currentTime);
+        if (color) entity.polygon!.material = new this.cesium.ColorMaterialProperty(color.withAlpha(value));
+      });
+    }
     this.render();
   }
   setCanopyOpacity(value: number) {
@@ -621,6 +709,31 @@ export class SceneAdapter {
   setBuildingOpacity(value: number) {
     this.buildingOpacity = value;
     this.updateBuildingColors();
+  }
+  applyHeatRisk(pres: HeatRiskPresentation | null, dataset: HeatRiskDataset | null) {
+    // 风险等级/偏热概率与环境色带同为地面着色，互斥显示；环境缓解（ΔP）是客观环境场的
+    // 互补信息，保留底层环境色带做混合渲染，底色读"有多热"、叠加读"环境缓解了多少"
+    this.heatRiskActive = !!(pres?.enabled && dataset) && pres.style !== 'mitigation';
+    if (pres?.enabled && dataset) {
+      if (!this.heatRisk) {
+        this.heatRisk = new HeatRiskLayer(this.cesium, this.viewer, {
+          onRasterAdded: () => { if (this.annotation) this.viewer.imageryLayers.raiseToTop(this.annotation); },
+        });
+      }
+      this.heatRisk.update(dataset, pres);
+    } else {
+      this.heatRisk?.setVisible(false);
+    }
+    this.syncEnvironmentCarpet();
+  }
+  /** 按热暴露风险图层开关归位环境色层（imagery / geojson / 演示网格）的可见性 */
+  private syncEnvironmentCarpet() {
+    const visible = !this.heatRiskActive;
+    const environment = this.environment;
+    if (environment instanceof this.cesium.ImageryLayer) environment.show = visible;
+    else if (environment) environment.show = visible;
+    if (this.demoDataSource && (this.demoDataSource as any).isDestroyed?.() !== true) this.demoDataSource.show = visible;
+    this.render();
   }
   setRecords(records: PublicCheckIn[]) {
     const group = this.group('ugc');
@@ -977,19 +1090,8 @@ export class SceneAdapter {
         }
         if (!rings.length || !rings[0] || rings[0].length < 3) continue;
 
-        // 计算建筑物平面质心坐标，用于底图热暴露场像素级颜色采样
-        let sumLon = 0;
-        let sumLat = 0;
         const ring = rings[0]!;
-        for (let i = 0; i < ring.length; i++) {
-          sumLon += ring[i]![0]!;
-          sumLat += ring[i]![1]!;
-        }
-        const centerLon = sumLon / ring.length;
-        const centerLat = sumLat / ring.length;
-        this.buildingCenters.set(item.id, [centerLon, centerLat]);
-
-        const buildingColor = this.getBuildingColorAt(centerLon, centerLat);
+        const buildingColor = this.getBuildingColor();
 
         const outerPositions = ring.map(pt => cesium.Cartesian3.fromDegrees(pt[0]!, pt[1]!));
         const holes = rings.slice(1).map(r => new cesium.PolygonHierarchy(r.map(pt => cesium.Cartesian3.fromDegrees(pt[0]!, pt[1]!))));
@@ -1051,7 +1153,6 @@ export class SceneAdapter {
             this.buildingEntities.delete(id);
           }
           this.buildingAccessTime.delete(id);
-          this.buildingCenters.delete(id);
         }
         group.entities.resumeEvents();
       }
@@ -1066,11 +1167,14 @@ export class SceneAdapter {
     this.requestId++;
     if (this.buildingUpdateTimer) clearTimeout(this.buildingUpdateTimer);
     this.buildingAbortController?.abort();
+    this.heatRisk?.destroy();
+    this.heatRisk = undefined;
+    this.heatRiskActive = false;
     this.buildingEntities.clear();
     this.buildingAccessTime.clear();
-    this.buildingCenters.clear();
-    this.rasterSampler = null;
-    this.activeLegendColors = [];
+    this.imageryCache.clear();
+    this.demoEntities = [];
+    this.demoGridParams = [];
     this.handler?.destroy();
     this.removers.forEach(remove => remove());
     this.viewer.destroy();

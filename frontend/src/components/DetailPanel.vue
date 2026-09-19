@@ -1,36 +1,80 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import AppIcon from './AppIcon.vue';
 import SeriesChart from '../features/environment/SeriesChart.vue';
 import { useWorkspace } from '../stores/workspace';
+import { api, ApiError, errorMessage } from '../services/api';
 import { effectiveTime, localTime, modeNames, reasonText, sensationNames } from '../services/format';
 import type { Coordinates, FeatureDetail, PublicCheckIn } from '../services/contracts';
 const props = defineProps<{ record: PublicCheckIn | null; feature: FeatureDetail | null }>();
-const emit = defineEmits<{ close: []; checkin: []; point: [coordinates: Coordinates]; record: [record: PublicCheckIn]; export: [] }>();
+const emit = defineEmits<{ close: []; checkin: []; point: [coordinates: Coordinates]; record: [record: PublicCheckIn]; export: []; login: [] }>();
 const store = useWorkspace();
 const longitude = ref('');
 const latitude = ref('');
 const coordinateError = ref('');
 const extraValues = computed(() => store.point?.items.filter(item => item.variable !== store.committedVariable && item.availability === 'available').slice(0, 4) || []);
 const title = (variable: string) => store.catalog.products.find(item => item.variable === variable)?.name || variable;
+const isBuildingFeature = computed(() => ['layer_buildings', 'buildings'].includes(props.feature?.type || ''));
+const featureBadge = computed(() => {
+  const type = props.feature?.type;
+  if (type === 'layer_buildings' || type === 'buildings') return '三维建筑';
+  if (type === 'heat_risk') return '热暴露风险网格';
+  if (type === 'heat_risk_hotspot') return '热暴露极值热点';
+  return type || '';
+});
+const featureAccent = computed(() => (props.feature?.properties?._accent_color as string) || '');
+const featureSummary = computed(() => (props.feature?.properties?._summary as string) || '');
+const listedProperties = computed(() => Object.fromEntries(Object.entries(props.feature?.properties || {}).filter(([key]) => !key.startsWith('_'))));
 const overflow = computed(() => store.activeValue?.value != null && store.activeItem ? store.activeValue.value > store.activeItem.legend.max ? '↑ 超过图例上限' : store.activeValue.value < store.activeItem.legend.min ? '↓ 低于图例下限' : '' : '');
 function queryCoordinates() {
   const point: Coordinates = [Number(longitude.value), Number(latitude.value)];
   if (!longitude.value || !latitude.value || !point.every(Number.isFinite) || Math.abs(point[0]) > 180 || Math.abs(point[1]) > 90) { coordinateError.value = '请输入合法经纬度。'; return; }
   coordinateError.value = ''; emit('point', point);
 }
+
+const reportOpen = ref(false);
+const reportReason = ref('');
+const reportBusy = ref(false);
+const reportError = ref('');
+const reportedIds = ref(new Set<string>());
+let reportKey = '';
+const reported = computed(() => !!props.record && reportedIds.value.has(props.record.check_in_id));
+watch(() => props.record?.check_in_id, () => { reportOpen.value = false; reportReason.value = ''; reportError.value = ''; reportKey = ''; });
+async function submitReport() {
+  const record = props.record;
+  if (!record || reportBusy.value) return;
+  const reason = reportReason.value.trim();
+  if (!reason) { reportError.value = '请简要说明举报原因。'; return; }
+  if (!store.session.authenticated) { emit('login'); return; }
+  if (!reportKey) reportKey = crypto.randomUUID();
+  reportBusy.value = true;
+  reportError.value = '';
+  try {
+    await api.report(record.check_in_id, reason, reportKey);
+    reportedIds.value = new Set(reportedIds.value).add(record.check_in_id);
+    reportOpen.value = false;
+    reportReason.value = '';
+    reportKey = '';
+  } catch (problem) {
+    reportError.value = errorMessage(problem);
+    if (problem instanceof ApiError && problem.status === 401) store.session = { authenticated: false, user: null };
+  } finally {
+    reportBusy.value = false;
+  }
+}
 </script>
 <template>
   <div class="flex items-center justify-between"><h2 class="text-base font-semibold">地点详情</h2><button class="icon-button" aria-label="收起地点详情" @click="emit('close')"><AppIcon name="close" :size="17" /></button></div>
-  <template v-if="record"><section class="mt-5 rounded-xl border border-line bg-canvas p-4"><div class="flex items-center justify-between"><span class="font-medium">{{ record.alias }}</span><span class="sensation-label" :class="`label-${record.thermal_sensation}`">{{ sensationNames[record.thermal_sensation] }}</span></div><p class="mt-3 text-sm leading-7">{{ record.note || '没有补充描述' }}</p><p class="mt-3 text-xs text-muted">{{ localTime(record.experienced_at, true) }} · 实际体验</p><p class="mt-2 text-xs text-muted">{{ record.public_location_precision === 'grid_200m' ? '位置以约 200 米网格中心展示' : '用户选择公开精确位置' }}</p></section></template>
+  <template v-if="record"><section class="mt-5 rounded-xl border border-line bg-canvas p-4"><div class="flex items-center justify-between"><span class="font-medium">{{ record.alias }}</span><span class="sensation-label" :class="`label-${record.thermal_sensation}`">{{ sensationNames[record.thermal_sensation] }}</span></div><p class="mt-3 text-sm leading-7">{{ record.note || '没有补充描述' }}</p><p class="mt-3 text-xs text-muted">{{ localTime(record.experienced_at, true) }} · 实际体验</p><p class="mt-2 text-xs text-muted">{{ record.public_location_precision === 'grid_200m' ? '位置以约 200 米网格中心展示' : '用户选择公开精确位置' }}</p><div class="mt-3 border-t border-line/60 pt-2.5"><p v-if="reported" class="text-xs text-muted">已提交举报，等待人工复核</p><button v-else-if="!reportOpen" class="text-button text-xs" @click="reportOpen = true">举报这条记录</button><form v-else class="space-y-2" @submit.prevent="submitReport"><label class="field-label text-xs">举报理由<textarea v-model="reportReason" class="input mt-1" rows="2" maxlength="500" placeholder="例如：与地点无关、重复提交、包含个人信息" /></label><p class="text-[11px] text-muted">{{ reportReason.trim().length }} / 500 · 提交后仅作为人工复核线索，平台不即时判定</p><p v-if="reportError" class="text-xs text-terracotta" role="alert">{{ reportError }}</p><div class="flex items-center gap-2"><button class="button text-xs py-1 px-2.5" type="submit" :disabled="reportBusy">{{ reportBusy ? '提交中' : '提交举报' }}</button><button class="button text-xs py-1 px-2.5" type="button" :disabled="reportBusy" @click="reportOpen = false">取消</button><span v-if="!store.session.authenticated" class="text-[11px] text-muted">登录后才能提交</span></div></form></div></section></template>
   <section v-if="feature" class="mt-5 rounded-xl border border-line bg-canvas/50 p-4">
     <div class="flex items-center justify-between">
       <h3 class="section-title text-base">{{ feature.name }}</h3>
-      <span class="rounded bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
-        {{ feature.type === 'layer_buildings' || feature.type === 'buildings' ? '三维建筑' : feature.type }}
+      <span class="rounded px-2 py-0.5 text-xs font-medium" :class="featureAccent ? '' : 'bg-accent/10 text-accent'" :style="featureAccent ? { background: featureAccent, color: '#ffffff' } : undefined">
+        {{ featureBadge }}
       </span>
     </div>
-    <div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+    <p v-if="featureSummary" class="mt-3 text-xs leading-6 text-ink">{{ featureSummary }}</p>
+    <div v-if="isBuildingFeature" class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
       <div>
         <span class="text-muted">建筑高度：</span>
         <strong class="font-medium text-ink">{{ feature.height_m === null ? '未知' : `${feature.height_m} m` }}</strong>
@@ -46,9 +90,9 @@ function queryCoordinates() {
     </div>
     <p v-if="feature.height_source" class="mt-2 text-xs text-muted">{{ feature.height_source }}</p>
     <details class="mt-3 text-xs">
-      <summary class="cursor-pointer text-muted hover:text-ink">对象属性 ({{ Object.keys(feature.properties).length }})</summary>
+      <summary class="cursor-pointer text-muted hover:text-ink">对象属性 ({{ Object.keys(listedProperties).length }})</summary>
       <dl class="mt-2 max-h-40 space-y-1.5 overflow-y-auto pr-1">
-        <div v-for="(value, key) in feature.properties" :key="key" class="flex justify-between gap-2 break-all text-[11px]">
+        <div v-for="(value, key) in listedProperties" :key="key" class="flex justify-between gap-2 break-all text-[11px]">
           <dt class="text-muted">{{ key }}</dt>
           <dd class="text-right font-mono text-ink">{{ String(value) }}</dd>
         </div>

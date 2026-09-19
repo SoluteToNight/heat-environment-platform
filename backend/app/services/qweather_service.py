@@ -68,12 +68,13 @@ class QWeatherClient:
             self._expires_at = expires_at
             return token
 
-    def fetch_hourly(self, latitude=None, longitude=None):
+    def fetch_hourly(self, latitude=None, longitude=None, http_client=None):
         host = self.validate_config()
         latitude = round(self.config.SHANGHAI_CENTER_LAT if latitude is None else latitude, 2)
         longitude = round(self.config.SHANGHAI_CENTER_LON if longitude is None else longitude, 2)
         path = f'/weather/v1/hourly/{latitude:.2f}/{longitude:.2f}'
-        with httpx.Client(timeout=self.config.WEATHER_REQUEST_TIMEOUT_SECONDS, transport=self.transport, follow_redirects=False) as client:
+
+        def _do_fetch(client):
             for attempt in range(2):
                 token = self.token(refresh=attempt == 1)
                 try:
@@ -101,6 +102,11 @@ class QWeatherClient:
                 except ValueError:
                     raise QWeatherError('QWeather returned invalid JSON.') from None
                 return normalize_hourly(payload, latitude, longitude, path)
+
+        if http_client is not None:
+            return _do_fetch(http_client)
+        with httpx.Client(timeout=self.config.WEATHER_REQUEST_TIMEOUT_SECONDS, transport=self.transport, follow_redirects=False) as client:
+            return _do_fetch(client)
 
 
 def numeric(value, field, minimum=None, maximum=None):

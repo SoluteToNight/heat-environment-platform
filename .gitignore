@@ -62,6 +62,9 @@ forecast_cache/
 *.bak
 *.gdb/
 
+# --- 8.1 forecast 原型研究目录（独立 FastAPI 服务与分析产物，平台运行不依赖；已单独归档于仓库外） ---
+forecast/
+
 # --- 9. 编辑器与操作系统产生文件 (IDE & OS Files) ---
 .vscode/
 .idea/

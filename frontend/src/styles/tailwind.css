@@ -115,7 +115,7 @@
 
 /* Clean Spatio-temporal Timeline Controller */
 .timeline-panel {
-  @apply absolute bottom-6 left-1/2 -translate-x-1/2 w-[min(90%,26rem)] px-4 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-line/80 shadow-xl z-20 transition-all;
+  @apply absolute bottom-6 left-1/2 -translate-x-1/2 w-[min(92%,44rem)] px-4 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-line/80 shadow-xl z-20 transition-all;
 }
 
 /* Dialog */
@@ -190,4 +190,63 @@ input[type="range"] { accent-color: #176c53; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
+}
+
+/* ---------- Site pages (首页 / 个人中心 / 关于) ---------- */
+.site-page { min-height: 100dvh; background: var(--color-canvas); }
+.site-header {
+  position: sticky; top: 0; z-index: 40;
+  background: #fffffff2; backdrop-filter: blur(14px);
+  border-bottom: 1px solid #e0e7e1b8;
+}
+.site-nav-link {
+  position: relative; padding: 7px 14px; border-radius: 999px;
+  font-size: 13px; font-weight: 500; color: var(--color-muted);
+  transition: color .2s, background-color .2s;
+}
+.site-nav-link:hover { color: var(--color-ink); background: #e1eee580; }
+.site-nav-link.is-active { color: var(--color-accent); background: var(--color-green-soft); font-weight: 600; }
+/* 等温线背景画布：标题侧轻微渐隐（保持存在感），文字区仍保证对比 */
+.isotherm-canvas {
+  -webkit-mask-image: linear-gradient(100deg, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.95) 40%, #000 62%);
+  mask-image: linear-gradient(100deg, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.95) 40%, #000 62%);
+}
+.text-thermal {
+  background: linear-gradient(92deg, #2b7bc0 0%, #6da38b 38%, #e58d3c 68%, #d64732 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.glass-card {
+  background: #ffffffd9; backdrop-filter: blur(12px);
+  border: 1px solid #ffffffc4; border-radius: 20px;
+  box-shadow: 0 12px 40px #28453618;
+}
+.feature-card {
+  background: #ffffffd9; border: 1px solid var(--color-line); border-radius: 18px;
+  transition: transform .3s cubic-bezier(.22,.61,.36,1), box-shadow .3s, border-color .3s;
+}
+.feature-card:hover { transform: translateY(-4px); border-color: #a5bfae; box-shadow: 0 14px 34px #28453616; }
+.reveal { opacity: 0; transform: translateY(20px); transition: opacity .7s cubic-bezier(.22,.61,.36,1), transform .7s cubic-bezier(.22,.61,.36,1); }
+.reveal.is-visible { opacity: 1; transform: none; }
+@keyframes site-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.site-marquee-track { display: flex; width: max-content; animation: site-marquee 42s linear infinite; }
+.site-marquee:hover .site-marquee-track { animation-play-state: paused; }
+@keyframes site-float { from { transform: translateY(0); } to { transform: translateY(-10px); } }
+.site-float { animation: site-float 5.5s ease-in-out infinite alternate; }
+.site-float-slow { animation: site-float 7.5s ease-in-out infinite alternate; }
+@keyframes site-pulse-dot { 0%, 100% { box-shadow: 0 0 0 0 #34816630; } 50% { box-shadow: 0 0 0 7px #34816600; } }
+.live-dot { animation: site-pulse-dot 2.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .site-marquee-track, .site-float, .site-float-slow, .live-dot { animation: none !important; }
+}
+
+/* ---------- Hero interactions (首页) ---------- */
+@keyframes scroll-cue { 0% { transform: translateY(-120%); } 100% { transform: translateY(280%); } }
+.scroll-cue-line { animation: scroll-cue 2.4s cubic-bezier(.65, 0, .35, 1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .scroll-cue-line { animation: none !important; }
+}
+
+/* ---------- 双卡详细/简略态切换（首页）：槽位由 WAAPI 补间（部分内嵌浏览器 CSS transition 会冻结） ---------- */
+.card-swap-slot {
+  position: absolute;
 }

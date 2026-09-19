@@ -135,6 +135,109 @@ def test_public_view_and_revision_control(client: TestClient, user_auth_headers:
     assert client.get(f"/api/v1/check-ins/{chk_id}").status_code == 404
 
 
+def test_update_location_and_experience_time(client: TestClient, user_auth_headers: dict):
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    body = {
+        "location": {"type": "Point", "coordinates": [121.4737, 31.2304]},
+        "experienced_at": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "thermal_sensation": "warm",
+        "visibility": "public",
+        "public_location_precision": "grid_200m",
+    }
+    create_resp = client.post("/api/v1/check-ins", json=body, headers={**user_auth_headers, "Idempotency-Key": str(uuid.uuid4())})
+    assert create_resp.status_code == 201
+    chk_id = create_resp.json()["data"]["id"]
+
+    moved_at = (now_utc - datetime.timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    patch_resp = client.patch(
+        f"/api/v1/check-ins/{chk_id}",
+        json={
+            "location": {"type": "Point", "coordinates": [121.50, 31.25]},
+            "location_source": "manual_coordinates",
+            "horizontal_accuracy_m": None,
+            "experienced_at": moved_at,
+            "note": "改到世纪公园附近",
+        },
+        headers={**user_auth_headers, "If-Match": '"1"'},
+    )
+    assert patch_resp.status_code == 200
+    data = patch_resp.json()["data"]
+    assert data["revision"] == 2
+    assert data["exact_location"]["coordinates"] == [121.50, 31.25]
+    assert data["experienced_at"] == moved_at
+    # The public grid cell must be re-derived from the new exact point
+    assert data["public_location"]["coordinates"] != [121.50, 31.25]
+    assert data["match_status"] == "pending"
+
+    # Rejected edits reuse the create-time guards and must not bump the revision
+    future_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for bad_body in (
+        {"location": {"type": "Point", "coordinates": [114.0, 30.0]}},
+        {"location": {"type": "Point", "coordinates": [121.50, 31.25, 10.0]}},
+        {"experienced_at": future_at},
+    ):
+        bad_resp = client.patch(f"/api/v1/check-ins/{chk_id}", json=bad_body, headers={**user_auth_headers, "If-Match": '"2"'})
+        assert bad_resp.status_code == 422
+
+    detail = client.get(f"/api/v1/check-ins/{chk_id}", headers=user_auth_headers)
+    assert detail.json()["data"]["revision"] == 2
+    assert detail.json()["data"]["exact_location"]["coordinates"] == [121.50, 31.25]
+
+    del_resp = client.delete(f"/api/v1/check-ins/{chk_id}", headers={**user_auth_headers, "If-Match": '"2"'})
+    assert del_resp.status_code == 204
+
+
+def test_report_intake_validation_and_idempotency(client: TestClient, user_auth_headers: dict):
+    now_time = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = {
+        "location": {"type": "Point", "coordinates": [121.46, 31.24]},
+        "experienced_at": now_time,
+        "thermal_sensation": "cool",
+        "visibility": "public",
+    }
+    create_resp = client.post("/api/v1/check-ins", json=body, headers={**user_auth_headers, "Idempotency-Key": str(uuid.uuid4())})
+    assert create_resp.status_code == 201
+    chk_id = create_resp.json()["data"]["id"]
+
+    key = str(uuid.uuid4())
+    first = client.post(f"/api/v1/check-ins/{chk_id}/reports", json={"reason": "疑似机器批量提交"}, headers={**user_auth_headers, "Idempotency-Key": key})
+    assert first.status_code == 201
+    report = first.json()["data"]
+    assert report["check_in_id"] == chk_id
+    # Intake only: the record stays pending, no adjudication happens here
+    assert report["status"] == "pending"
+    assert report["report_id"]
+
+    # Same key + same payload replays the stored report instead of inserting a second one
+    replay = client.post(f"/api/v1/check-ins/{chk_id}/reports", json={"reason": "疑似机器批量提交"}, headers={**user_auth_headers, "Idempotency-Key": key})
+    assert replay.status_code == 201
+    assert replay.json()["data"]["report_id"] == report["report_id"]
+
+    # Same key + different payload is a conflict, mirroring check-in creation
+    clash = client.post(f"/api/v1/check-ins/{chk_id}/reports", json={"reason": "内容不相关"}, headers={**user_auth_headers, "Idempotency-Key": key})
+    assert clash.status_code == 409
+
+    # Blank reasons never reach storage
+    assert client.post(f"/api/v1/check-ins/{chk_id}/reports", json={"reason": ""}, headers={**user_auth_headers, "Idempotency-Key": str(uuid.uuid4())}).status_code == 422
+    assert client.post(f"/api/v1/check-ins/{chk_id}/reports", json={"reason": "   "}, headers={**user_auth_headers, "Idempotency-Key": str(uuid.uuid4())}).status_code == 422
+
+    # Unknown and privately held targets are indistinguishable
+    assert client.post("/api/v1/check-ins/chk_does_not_exist/reports", json={"reason": "测试"}, headers={**user_auth_headers, "Idempotency-Key": str(uuid.uuid4())}).status_code == 404
+
+    private_body = {**body, "visibility": "private", "thermal_sensation": "warm"}
+    private_resp = client.post("/api/v1/check-ins", json=private_body, headers={**user_auth_headers, "Idempotency-Key": str(uuid.uuid4())})
+    private_id = private_resp.json()["data"]["id"]
+    client.cookies.clear()
+    anonymous = client.post(f"/api/v1/check-ins/{private_id}/reports", json={"reason": "未登录举报"}, headers={"Idempotency-Key": str(uuid.uuid4())})
+    assert anonymous.status_code == 401
+    # A non-public target answers 404 even to its own owner: only published records are reportable
+    assert client.post(f"/api/v1/check-ins/{private_id}/reports", json={"reason": "私有记录举报"}, headers={**user_auth_headers, "Idempotency-Key": str(uuid.uuid4())}).status_code == 404
+
+    # Deleting the target removes the reportable surface
+    client.delete(f"/api/v1/check-ins/{chk_id}", headers={**user_auth_headers, "If-Match": '"1"'})
+    assert client.post(f"/api/v1/check-ins/{chk_id}/reports", json={"reason": "已删除记录"}, headers={**user_auth_headers, "Idempotency-Key": str(uuid.uuid4())}).status_code == 404
+
+
 def test_aggregates_and_reports(client: TestClient, user_auth_headers: dict):
     now_time = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

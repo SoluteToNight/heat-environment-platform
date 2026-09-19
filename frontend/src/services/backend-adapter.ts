@@ -1,6 +1,17 @@
-import type { Availability, Bbox, Catalog, Coordinates, EnvironmentView, Layer, Product, Scene, Variable, ViewItem } from './contracts';
+import type { Availability, Bbox, Catalog, CheckIn, CheckInBody, Coordinates, EnvironmentView, Layer, Product, Scene, Session, Variable, ViewItem } from './contracts';
 
 interface WireScene { id: string; name: string; description?: string; center: Coordinates; bbox: Bbox; timezone?: string; tianditu_key?: string }
+interface WirePoint { type?: string; coordinates: Coordinates }
+interface WireSession { is_authenticated?: boolean; user?: { id?: string; username?: string; display_name?: string } | null }
+interface WireCheckIn {
+  id: string; scene_id?: string; alias?: string; created_at?: string; revision?: number;
+  location?: WirePoint; exact_location?: WirePoint; public_location?: WirePoint;
+  public_location_precision?: string; location_source?: string; horizontal_accuracy_m?: number | null;
+  experienced_at?: string; time_source?: string; time_uncertainty_minutes?: number | null;
+  thermal_sensation?: CheckInBody['thermal_sensation']; thermal_comfort?: string | null;
+  setting?: CheckInBody['setting']; activity?: string | null; sun_exposure?: string | null; note?: string | null;
+  visibility?: string; publication_status?: string; match_status?: CheckIn['match_status'];
+}
 interface WireLayer { layer_id: string; name: string; is_visible_default: boolean; attribution: string; type?: string }
 interface WireProduct { product_id: string; variables: Array<{ code: string; name: string; unit: string; description: string; availability: Availability }>; times?: string[] }
 interface WireView {
@@ -10,7 +21,7 @@ interface WireView {
 const scenes = new Map<string, Scene>();
 const views = new Map<string, EnvironmentView>();
 const legends: Record<Variable, Product['legend']> = {
-  utci: { min: 10, max: 45, colors: ['#313695', '#4575b4', '#74add1', '#abd9e9', '#fee090', '#fdae61', '#f46d43', '#d73027'] },
+  utci: { min: 15, max: 35, colors: ['#313695', '#4575b4', '#74add1', '#66bd63', '#a6d96a', '#fed976', '#fdae61', '#f46d43', '#d73027'] },
   air_temperature: { min: 0, max: 40, colors: ['#e4e9ba', '#ead18e', '#e9a365', '#cc6952'] },
   relative_humidity: { min: 0, max: 100, colors: ['#edf2d5', '#acd8c0', '#5aa9b6', '#3a658c'] },
   wind_speed: { min: 0, max: 15, colors: ['#e0edd7', '#a4c9b0', '#609d94', '#336d78'] },
@@ -21,7 +32,48 @@ const legends: Record<Variable, Product['legend']> = {
   net_shortwave_background: { min: 0, max: 1000, colors: ['#f4edc9', '#eed496', '#d7a063', '#ac664c'] },
   local_downwelling_shortwave: { min: 0, max: 1000, colors: ['#f4edc9', '#ac664c'] },
 };
-const page = (items: unknown[]) => ({ items, next_cursor: null });
+const page = (items: unknown[], next_cursor: string | null = null) => ({ items, next_cursor });
+// The backend paginates by offset, the frontend contract carries an opaque cursor.
+const nextCursor = (url: URL, count: number) => {
+  const limit = Number(url.searchParams.get('limit')) || 0;
+  if (!limit || count < limit) return null;
+  return String((Number(url.searchParams.get('offset')) || 0) + limit);
+};
+
+const normalizeSession = (value: WireSession): Session => ({
+  authenticated: !!value.is_authenticated,
+  user: value.user ? { user_id: value.user.username || value.user.id || '', alias: value.user.display_name || value.user.username || '市民' } : null,
+});
+
+const locationSources: CheckInBody['location_source'][] = ['manual_map', 'manual_coordinates', 'browser_geolocation'];
+
+function normalizeOwnerCheckIn(value: WireCheckIn): CheckIn {
+  const point = value.exact_location || value.public_location || value.location;
+  if (!value.id || !point || point.coordinates.length !== 2) throw new Error('个人打卡记录缺少标识或坐标。');
+  return {
+    scene_id: value.scene_id || 'scene_shanghai',
+    location: { type: 'Point', coordinates: [point.coordinates[0], point.coordinates[1]] },
+    location_source: locationSources.includes(value.location_source as CheckInBody['location_source']) ? value.location_source as CheckInBody['location_source'] : 'manual_coordinates',
+    horizontal_accuracy_m: value.horizontal_accuracy_m ?? null,
+    experienced_at: value.experienced_at || '',
+    time_source: 'user_selected',
+    time_uncertainty_minutes: value.time_uncertainty_minutes ?? null,
+    thermal_sensation: value.thermal_sensation || 'neutral',
+    thermal_comfort: (value.thermal_comfort ?? null) as CheckInBody['thermal_comfort'],
+    setting: value.setting || 'unknown',
+    activity: value.activity ?? null,
+    sun_exposure: value.sun_exposure ?? null,
+    note: value.note ?? null,
+    visibility: value.visibility === 'private' ? 'private' : 'public',
+    public_location_precision: value.public_location_precision === 'exact' ? 'exact' : 'grid_200m',
+    check_in_id: value.id,
+    revision: String(value.revision ?? 1),
+    alias: value.alias || '我',
+    published_at: value.created_at ?? null,
+    match_status: value.match_status || 'pending',
+    publication_status: value.publication_status || 'pending',
+  };
+}
 
 export function normalizeScene(value: WireScene): Scene {
   if (!value.id || !Array.isArray(value.center) || value.center.length !== 2 || !Array.isArray(value.bbox)) throw new Error('场景接口缺少标识、中心或范围。');
@@ -155,12 +207,15 @@ export function normalizeBackendResponse(path: string, data: unknown, apiBase: s
     const variable = url.searchParams.get('variables') || url.searchParams.get('variable') || 'air_temperature';
     return { view_id: result.view_id, variable, unit: views.get(result.view_id)?.items.find(item => item.variable === variable)?.unit || '', points: result.steps.map(step => ({ time: step.time, value: step.values[variable] ?? null })) };
   }
+  if ((pathname === '/auth/login' || pathname === '/auth/session') && data && typeof data === 'object') return normalizeSession(data as WireSession);
+  if (pathname === '/me/check-ins' && Array.isArray(data)) return page((data as WireCheckIn[]).map(normalizeOwnerCheckIn), nextCursor(url, data.length));
   if (pathname === '/check-ins' && Array.isArray(data)) {
-    return page(data.map((item: any) => ({
+    return page((data as WireCheckIn[]).map(item => ({
       ...item,
-      check_in_id: item.check_in_id || item.id,
-      alias: item.alias || `市民 (${String(item.id || '').slice(-4)})`,
-    })));
+      check_in_id: item.id,
+      alias: item.alias || `市民 (${String(item.id).slice(-4)})`,
+    })), nextCursor(url, data.length));
   }
+  if (data && typeof data === 'object' && 'exact_location' in Object(data)) return normalizeOwnerCheckIn(data as WireCheckIn);
   return data;
 }

@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from app.db.models import EnvRelease, SystemTask, User, utc_now
 from app.schemas.task import SceneStatusResponse, TaskResponse
 from app.services.weather_service import configured_product_id
+from app.schemas.common import format_utc_z
 
 
 def get_scene_status_info(db: Session, scene_id: str) -> tuple[SceneStatusResponse, str]:
@@ -33,7 +34,7 @@ def get_scene_status_info(db: Session, scene_id: str) -> tuple[SceneStatusRespon
     if latest_rel:
         age_hours = (now - latest_rel.computed_at).total_seconds() / 3600.0
         freshness = "fresh" if age_hours <= 3.0 else "stale"
-        last_success_str = latest_rel.computed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+        last_success_str = format_utc_z(latest_rel.computed_at)
         active_releases = [latest_rel.id]
 
     etag_raw = f"{scene_id}_{update_state}_{freshness}_{last_success_str}"
@@ -66,6 +67,6 @@ def get_task_by_id(db: Session, task_id: str, user: User) -> TaskResponse:
         progress_pct=task.progress_pct,
         error_message=task.error_message,
         result_meta=task.result_meta,
-        created_at=task.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        updated_at=task.updated_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        created_at=format_utc_z(task.created_at),
+        updated_at=format_utc_z(task.updated_at),
     )

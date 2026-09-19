@@ -28,6 +28,12 @@ class CheckInCreateRequest(BaseModel):
 
 
 class CheckInUpdateRequest(BaseModel):
+    location: Optional[GeoPoint] = None
+    location_source: Optional[str] = None
+    horizontal_accuracy_m: Optional[float] = None
+    experienced_at: Optional[datetime.datetime] = None
+    time_source: Optional[str] = None
+    time_uncertainty_minutes: Optional[int] = None
     thermal_sensation: Optional[str] = None
     thermal_comfort: Optional[str] = None
     setting: Optional[str] = None
@@ -97,4 +103,4 @@ class CheckInAggregateItem(BaseModel):
 
 
 class ReportCreateRequest(BaseModel):
-    reason: str = Field(..., max_length=500, description="Report rationale")
+    reason: str = Field(..., min_length=1, max_length=500, description="Report rationale")

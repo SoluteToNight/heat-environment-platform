@@ -1,4 +1,5 @@
 import datetime
+import functools
 import hashlib
 import io
 import json
@@ -21,7 +22,7 @@ from app.services.spatial_math import PROJECT, EXCHANGE, interpolate, wind_compo
 
 
 VARIABLES = {
-    'utci': ('通用热气候指数 (UTCI)', '°C', 10, 45, ['#313695', '#4575b4', '#74add1', '#abd9e9', '#fee090', '#fdae61', '#f46d43', '#d73027']),
+    'utci': ('通用热气候指数 (UTCI)', '°C', 15, 35, ['#313695', '#4575b4', '#74add1', '#66bd63', '#a6d96a', '#fed976', '#fdae61', '#f46d43', '#d73027']),
     'air_temperature': ('气温', '°C', 0, 40, ['#2c7bb6', '#74add1', '#abd9e9', '#ffffbf', '#fdae61', '#f46d43', '#d7191c']),
     'relative_humidity': ('相对湿度', '%', 0, 100, ['#f7fcf5', '#caeac3', '#7bcbc4', '#3690c0', '#023858']),
     'wind_speed': ('风速', 'm/s', 0, 15, ['#ffffcc', '#a1dab4', '#41b6c4', '#2c7fb8', '#253494']),
@@ -51,15 +52,42 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+_manifest_cache: dict[str, tuple[float, dict]] = {}
+_release_arrays_cache: dict[str, dict[str, np.ndarray]] = {}
+_release_single_array_cache: dict[str, np.ndarray] = {}
+_raster_grid_cache: dict[tuple[str, int], tuple[np.ndarray, np.ndarray]] = {}
+_views_cache: dict[str, dict] = {}
+
+
+def get_release_arrays(directory: Path, filename: str) -> dict[str, np.ndarray]:
+    key = str(directory / filename)
+    if key not in _release_arrays_cache:
+        with np.load(directory / filename, allow_pickle=False) as arrays:
+            _release_arrays_cache[key] = {k: np.array(arrays[k]) for k in arrays.files}
+    return _release_arrays_cache[key]
+
+
+def get_release_single_array(path: Path) -> np.ndarray:
+    key = str(path)
+    if key not in _release_single_array_cache:
+        _release_single_array_cache[key] = np.load(path, allow_pickle=False)
+    return _release_single_array_cache[key]
+
+
 def boundary_path():
     return settings.BASE_DIR.parent.parent / 'data/osm/shanghai/shanghai_boundary.geojson'
 
 
-def load_boundary(path=None):
-    source = json.loads(Path(path or boundary_path()).read_text(encoding='utf-8-sig'))
+@functools.lru_cache(maxsize=16)
+def _cached_load_boundary(path_str: str):
+    source = json.loads(Path(path_str).read_text(encoding='utf-8-sig'))
     if source['type'] == 'FeatureCollection':
         return unary_union([shape(feature['geometry']) for feature in source['features']])
     return shape(source.get('geometry', source))
+
+
+def load_boundary(path=None):
+    return _cached_load_boundary(str(path or boundary_path()))
 
 
 def sampling_plan(longitude, latitude, spacing=1000, side=3):
@@ -171,20 +199,40 @@ def read_release(run_id=None, pointer_name='latest.json'):
         pointer = root / pointer_name
         if not pointer.exists():
             return None
-        run_id = json.loads(pointer.read_text(encoding='utf-8'))['run_id']
+        pointer_str = str(pointer)
+        pointer_mtime = pointer.stat().st_mtime
+        if pointer_str in _manifest_cache and _manifest_cache[pointer_str][0] == pointer_mtime:
+            run_id = _manifest_cache[pointer_str][1]['run_id']
+        else:
+            run_id = json.loads(pointer.read_text(encoding='utf-8'))['run_id']
+            _manifest_cache[pointer_str] = (pointer_mtime, {'run_id': run_id})
     if not re.fullmatch(r'spatial_[A-Za-z0-9_]+', run_id):
         raise ValueError('Invalid spatial release ID.')
     directory = root / run_id
-    manifest = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
+    manifest_path = directory / 'manifest.json'
+    manifest_key = str(manifest_path)
+    mtime = manifest_path.stat().st_mtime if manifest_path.exists() else 0
+    if manifest_key in _manifest_cache and _manifest_cache[manifest_key][0] == mtime:
+        manifest = _manifest_cache[manifest_key][1]
+    else:
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        _manifest_cache[manifest_key] = (mtime, manifest)
     if manifest['status'] != 'completed':
         raise ValueError('Spatial release is not complete.')
     return directory, manifest
 
 
-def sample_release(run_id, time_index, coordinates):
+def sample_release(run_id, time_index, coordinates, target_variable=None):
     directory, manifest = read_release(run_id)
     if time_index < 0 or time_index >= len(manifest['times']):
         raise ValueError('Invalid forecast frame.')
+    lower = int(np.floor(time_index))
+    upper = min(lower + 1, len(manifest['times']) - 1)
+    fraction = float(time_index - lower)
+    def temporal(cube):
+        if upper == lower or fraction <= 0:
+            return cube[lower]
+        return cube[lower] * (1 - fraction) + cube[upper] * fraction
     coordinates = np.asarray(coordinates, dtype=float)
     if coordinates.ndim != 2 or coordinates.shape[1] != 2 or not np.isfinite(coordinates).all() or np.any(np.abs(coordinates) > [180, 90]):
         raise ValueError('Invalid WGS84 query coordinates.')
@@ -192,46 +240,63 @@ def sample_release(run_id, time_index, coordinates):
     queries = np.column_stack([east, north])
     if manifest.get('kind') == 'tile':
         from app.services.radiation_service import sample_tile
-        result = {'net_shortwave_background': sample_tile(np.load(directory / 'net_shortwave.npy', allow_pickle=False), manifest['profile'], coordinates)}
+        data = get_release_single_array(directory / 'net_shortwave.npy')
+        result = {'net_shortwave_background': sample_tile(data, manifest['profile'], coordinates)}
     elif manifest.get('kind') == 'geometry':
-        with np.load(directory / 'receivers.npz', allow_pickle=False) as arrays:
-            _, nearest = cKDTree(arrays['projected']).query(queries)
-            supported = np.all(np.abs(queries - arrays['projected'][nearest]) <= manifest['grid_m'] / 2 + 1e-6, axis=1)
-            result = {variable: arrays[variable][nearest].copy() for variable in manifest['display_variables']}
-            for values in result.values():
-                values[~supported] = np.nan
+        arrays = get_release_arrays(directory, 'receivers.npz')
+        _, nearest = cKDTree(arrays['projected']).query(queries)
+        supported = np.all(np.abs(queries - arrays['projected'][nearest]) <= manifest['grid_m'] / 2 + 1e-6, axis=1)
+        vars_to_extract = [target_variable] if (target_variable and target_variable in manifest['display_variables']) else manifest['display_variables']
+        result = {variable: arrays[variable][nearest].copy() for variable in vars_to_extract}
+        for values in result.values():
+            values[~supported] = np.nan
     elif manifest.get('kind') == 'adjustment_500m':
-        with np.load(directory / 'grid_500m.npz', allow_pickle=False) as arrays:
-            lons = arrays['lons']
-            lats = arrays['lats']
-            result = {}
-            for variable in manifest['display_variables']:
-                if variable in arrays:
-                    cube = arrays[variable]
-                    field_2d = cube[time_index]
-                    interpolator = RegularGridInterpolator((lats, lons), field_2d, bounds_error=False, fill_value=np.nan)
-                    result[variable] = interpolator(np.column_stack([coordinates[:, 1], coordinates[:, 0]]))
+        arrays = get_release_arrays(directory, 'grid_500m.npz')
+        lons = arrays['lons']
+        lats = arrays['lats']
+        result = {}
+        vars_to_interp = [target_variable] if (target_variable and target_variable in manifest['display_variables']) else manifest['display_variables']
+        for variable in vars_to_interp:
+            if variable in arrays:
+                cube = arrays[variable]
+                field_2d = temporal(cube)
+                interpolator = RegularGridInterpolator((lats, lons), field_2d, bounds_error=False, fill_value=np.nan)
+                result[variable] = interpolator(np.column_stack([coordinates[:, 1], coordinates[:, 0]]))
     else:
-        with np.load(directory / 'weather.npz', allow_pickle=False) as arrays:
-            values = arrays['values'][time_index]
+        arrays = get_release_arrays(directory, 'weather.npz')
+        values = temporal(arrays['values'])
+        if target_variable and target_variable in WEATHER_VARIABLES:
+            var_idx = WEATHER_VARIABLES.index(target_variable)
+            result = {target_variable: interpolate(arrays['projected'], values[:, var_idx], queries)}
+        elif target_variable == 'wind_speed':
+            e_idx = WEATHER_VARIABLES.index('wind_east')
+            n_idx = WEATHER_VARIABLES.index('wind_north')
+            east = interpolate(arrays['projected'], values[:, e_idx], queries)
+            north = interpolate(arrays['projected'], values[:, n_idx], queries)
+            speed, direction = wind_from_components(east, north)
+            result = {'wind_speed': speed, 'wind_direction': direction}
+        else:
             result = {variable: interpolate(arrays['projected'], values[:, index], queries) for index, variable in enumerate(WEATHER_VARIABLES)}
-        result['wind_speed'], result['wind_direction'] = wind_from_components(result['wind_east'], result['wind_north'])
-        result['dew_point'][result['dew_point'] > result['air_temperature'] + .1] = np.nan
+            result['wind_speed'], result['wind_direction'] = wind_from_components(result['wind_east'], result['wind_north'])
+            result['dew_point'][result['dew_point'] > result['air_temperature'] + .1] = np.nan
     if len(coordinates) >= 100_000:
         mask_dir = directory / 'raster_cache'
         mask_dir.mkdir(exist_ok=True)
         mask_file = mask_dir / f'mask_{len(coordinates)}.npy'
         if mask_file.exists():
-            inside = np.load(mask_file)
+            inside = get_release_single_array(mask_file)
         else:
-            boundary = load_boundary(directory / 'boundary.geojson')
+            b_path = directory / 'boundary.geojson'
+            boundary = load_boundary(b_path if b_path.exists() else None)
             inside = contains_xy(boundary, coordinates[:, 0], coordinates[:, 1])
             try:
                 np.save(mask_file, inside)
+                _release_single_array_cache[str(mask_file)] = inside
             except Exception:
                 pass
     else:
-        boundary = load_boundary(directory / 'boundary.geojson')
+        b_path = directory / 'boundary.geojson'
+        boundary = load_boundary(b_path if b_path.exists() else None)
         inside = contains_xy(boundary, coordinates[:, 0], coordinates[:, 1])
     for values in result.values():
         values[~inside] = np.nan
@@ -252,87 +317,90 @@ def sample_release_series(run_id, coordinate, variable):
 
     if manifest.get('kind') == 'tile':
         from app.services.radiation_service import sample_tile
-        data = np.load(directory / 'net_shortwave.npy', allow_pickle=False)
+        data = get_release_single_array(directory / 'net_shortwave.npy')
         val = sample_tile(data, manifest['profile'], [[longitude, latitude]])[0]
         v_float = float(val) if np.isfinite(val) else None
         return [{'time': moment, 'value': v_float} for moment in manifest['times']]
     elif manifest.get('kind') == 'geometry':
         east, north = PROJECT.transform([longitude], [latitude])
         queries = np.column_stack([east, north])
-        with np.load(directory / 'receivers.npz', allow_pickle=False) as arrays:
-            _, nearest = cKDTree(arrays['projected']).query(queries)
-            supported = np.all(np.abs(queries - arrays['projected'][nearest]) <= manifest['grid_m'] / 2 + 1e-6, axis=1)[0]
-            if not supported or variable not in arrays:
-                return [{'time': moment, 'value': None} for moment in manifest['times']]
-            cube = arrays[variable]
-            if cube.ndim == 2:
-                sampled = cube[:, nearest[0]]
-                return [{'time': moment, 'value': float(val) if np.isfinite(val) else None} for moment, val in zip(manifest['times'], sampled)]
-            else:
-                val = float(cube[nearest[0]])
-                return [{'time': moment, 'value': val if np.isfinite(val) else None} for moment in manifest['times']]
+        arrays = get_release_arrays(directory, 'receivers.npz')
+        _, nearest = cKDTree(arrays['projected']).query(queries)
+        supported = np.all(np.abs(queries - arrays['projected'][nearest]) <= manifest['grid_m'] / 2 + 1e-6, axis=1)[0]
+        if not supported or variable not in arrays:
+            return [{'time': moment, 'value': None} for moment in manifest['times']]
+        cube = arrays[variable]
+        if cube.ndim == 2:
+            sampled = cube[:, nearest[0]]
+            return [{'time': moment, 'value': float(val) if np.isfinite(val) else None} for moment, val in zip(manifest['times'], sampled)]
+        else:
+            val = float(cube[nearest[0]])
+            return [{'time': moment, 'value': val if np.isfinite(val) else None} for moment in manifest['times']]
     elif manifest.get('kind') == 'adjustment_500m':
-        with np.load(directory / 'grid_500m.npz', allow_pickle=False) as arrays:
-            if variable not in arrays:
-                raise ValueError(f"Variable '{variable}' not found in release.")
-            lons = arrays['lons']
-            lats = arrays['lats']
-            cube = arrays[variable]
-            cube_t = np.moveaxis(cube, 0, -1)
-            interpolator = RegularGridInterpolator((lats, lons), cube_t, bounds_error=False, fill_value=np.nan)
-            sampled = interpolator([[latitude, longitude]])[0]
-            points = []
-            for moment, val in zip(manifest['times'], sampled):
-                points.append({'time': moment, 'value': float(val) if np.isfinite(val) else None})
-            return points
+        arrays = get_release_arrays(directory, 'grid_500m.npz')
+        if variable not in arrays:
+            raise ValueError(f"Variable '{variable}' not found in release.")
+        lons = arrays['lons']
+        lats = arrays['lats']
+        cube = arrays[variable]
+        cube_t = np.moveaxis(cube, 0, -1)
+        interpolator = RegularGridInterpolator((lats, lons), cube_t, bounds_error=False, fill_value=np.nan)
+        sampled = interpolator([[latitude, longitude]])[0]
+        points = []
+        for moment, val in zip(manifest['times'], sampled):
+            points.append({'time': moment, 'value': float(val) if np.isfinite(val) else None})
+        return points
     else:
         east, north = PROJECT.transform([longitude], [latitude])
         queries = np.column_stack([east, north])
-        with np.load(directory / 'weather.npz', allow_pickle=False) as arrays:
-            projected = arrays['projected']
-            all_values = arrays['values']
-            points = []
-            for time_index, moment in enumerate(manifest['times']):
-                values = all_values[time_index]
-                res = {var: interpolate(projected, values[:, idx], queries)[0] for idx, var in enumerate(WEATHER_VARIABLES)}
-                wind_speed, wind_dir = wind_from_components(np.array([res['wind_east']]), np.array([res['wind_north']]))
-                res['wind_speed'] = float(wind_speed[0])
-                res['wind_direction'] = float(wind_dir[0])
-                if res.get('dew_point') is not None and res.get('air_temperature') is not None and res['dew_point'] > res['air_temperature'] + 0.1:
-                    res['dew_point'] = np.nan
-                val = res.get(variable, np.nan)
-                points.append({'time': moment, 'value': float(val) if np.isfinite(val) else None})
-            return points
+        arrays = get_release_arrays(directory, 'weather.npz')
+        projected = arrays['projected']
+        all_values = arrays['values']
+        points = []
+        for time_index, moment in enumerate(manifest['times']):
+            values = all_values[time_index]
+            res = {var: interpolate(projected, values[:, idx], queries)[0] for idx, var in enumerate(WEATHER_VARIABLES)}
+            wind_speed, wind_dir = wind_from_components(np.array([res['wind_east']]), np.array([res['wind_north']]))
+            res['wind_speed'] = float(wind_speed[0])
+            res['wind_direction'] = float(wind_dir[0])
+            if res.get('dew_point') is not None and res.get('air_temperature') is not None and res['dew_point'] > res['air_temperature'] + 0.1:
+                res['dew_point'] = np.nan
+            val = res.get(variable, np.nan)
+            points.append({'time': moment, 'value': float(val) if np.isfinite(val) else None})
+        return points
 
 
 def resolve_dynamic_legend(variable, run_id=None, frame=None):
     default_name, unit, def_min, def_max, colors = VARIABLES[variable]
-    if run_id is None or frame is None:
+    if variable == 'utci' or run_id is None or frame is None:
         return {'min': def_min, 'max': def_max, 'colors': colors}
     try:
         directory, manifest = read_release(run_id)
         if manifest.get('kind') == 'adjustment_500m':
-            with np.load(directory / 'grid_500m.npz', allow_pickle=False) as arrays:
-                if variable in arrays:
-                    cube = arrays[variable]
-                    if 0 <= frame < len(cube):
-                        slice_data = cube[frame]
-                        valid = np.isfinite(slice_data)
-                        if np.any(valid):
-                            p1 = float(np.nanpercentile(slice_data[valid], 1.0))
-                            p99 = float(np.nanpercentile(slice_data[valid], 99.0))
-                            vmin = round(p1, 1)
-                            vmax = round(p99, 1)
-                            if vmax - vmin < 1.0:
-                                mid = round((p1 + p99) / 2.0, 1)
-                                vmin = round(mid - 0.6, 1)
-                                vmax = round(mid + 0.6, 1)
-                            return {'min': vmin, 'max': vmax, 'colors': colors}
+            arrays = get_release_arrays(directory, 'grid_500m.npz')
+            if variable in arrays:
+                cube = arrays[variable]
+                frame_idx = int(round(frame))
+                if 0 <= frame_idx < len(cube):
+                    slice_data = cube[frame_idx]
+                    valid = np.isfinite(slice_data)
+                    if np.any(valid):
+                        p1 = float(np.nanpercentile(slice_data[valid], 1.0))
+                        p99 = float(np.nanpercentile(slice_data[valid], 99.0))
+                        vmin = round(p1, 1)
+                        vmax = round(p99, 1)
+                        if vmax - vmin < 1.0:
+                            mid = round((p1 + p99) / 2.0, 1)
+                            vmin = round(mid - 0.6, 1)
+                            vmax = round(mid + 0.6, 1)
+                        return {'min': vmin, 'max': vmax, 'colors': colors}
         elif manifest.get('kind') not in ('tile', 'geometry'):
-            with np.load(directory / 'weather.npz', allow_pickle=False) as arrays:
-                if 'values' in arrays and variable in WEATHER_VARIABLES:
-                    var_idx = WEATHER_VARIABLES.index(variable)
-                    slice_data = arrays['values'][frame, :, var_idx]
+            arrays = get_release_arrays(directory, 'weather.npz')
+            if 'values' in arrays and variable in WEATHER_VARIABLES:
+                var_idx = WEATHER_VARIABLES.index(variable)
+                frame_idx = int(round(frame))
+                if 0 <= frame_idx < len(arrays['values']):
+                    slice_data = arrays['values'][frame_idx, :, var_idx]
                     valid = np.isfinite(slice_data)
                     if np.any(valid):
                         p1 = float(np.nanpercentile(slice_data[valid], 1.0))
@@ -387,20 +455,26 @@ def create_view(time_selection, variables):
             continue
         manifest = products[variable]
         times = [datetime.datetime.fromisoformat(moment) for moment in manifest['times']]
-        frame = min(range(len(times)), key=lambda index: abs((times[index] - requested).total_seconds()))
-        tolerance = datetime.timedelta(hours=1) if not manifest.get('kind') else datetime.timedelta(seconds=1)
-        supported = times[0] - tolerance <= requested <= times[-1] + tolerance
+        step_sec = max(1.0, (times[1] - times[0]).total_seconds()) if len(times) > 1 else 3600.0
+        if times[0] - datetime.timedelta(seconds=step_sec) <= requested <= times[-1]:
+            elapsed = max(0.0, (requested - times[0]).total_seconds())
+            frame = round(min(len(times) - 1.0, elapsed / step_sec), 4)
+            supported = True
+        else:
+            frame = float(min(range(len(times)), key=lambda index: abs((times[index] - requested).total_seconds())))
+            supported = False
         stale = (now - datetime.datetime.fromisoformat(manifest['created_at'])).total_seconds() > 3 * 3600
         support = manifest.get('spatial_support') or f"{len(manifest['plan']['points'])} 个查询位置，计划间距 {manifest['plan']['requested_spacing_m']} m；请求坐标保留两位小数；三角网插值，不外推。"
         items.append({
             'variable': variable, 'product_id': 'qweather_spatial', 'release_id': manifest['run_id'], 'unit': VARIABLES[variable][1],
             'frame': frame,
             'availability': 'available' if supported else 'missing', 'freshness': 'stale' if stale else 'fresh', 'reason_code': None if supported else 'outside_time_range',
-            'requested_time': utc_text(requested), 'resolved_time': utc_text(times[frame]) if supported else None, 'interval_start': manifest.get('profile', {}).get('interval_start'), 'interval_end': manifest.get('profile', {}).get('interval_end'), 'temporal_support': manifest.get('profile', {}).get('temporal_support', 'instant'),
-            'legend': legend(variable, manifest['run_id'], frame), 'assets': [{'type': 'image', 'url': f"/api/v1/spatial/releases/{manifest['run_id']}/raster/{variable}/{frame}.png", 'bbox': manifest['bbox'], 'attribution': 'QWeather'}] if supported else [],
+            'requested_time': utc_text(requested), 'resolved_time': utc_text(requested) if supported else None, 'interval_start': manifest.get('profile', {}).get('interval_start'), 'interval_end': manifest.get('profile', {}).get('interval_end'), 'temporal_support': 'interpolated_hourly' if supported and frame % 1 else manifest.get('profile', {}).get('temporal_support', 'instant'),
+            'legend': legend(variable, manifest['run_id'], int(round(frame))), 'assets': [{'type': 'image', 'url': f"/api/v1/spatial/releases/{manifest['run_id']}/raster/{variable}/{frame:.4f}.png?size=512", 'bbox': manifest['bbox'], 'attribution': 'QWeather'}] if supported else [],
             'provenance': {'source': manifest['source'] + '；' + '；'.join(manifest['attributions']), 'spatial_support': support, 'receiver_height': manifest.get('receiver_height', '供应商未声明；非街谷或人体热暴露模型'), 'model_version': manifest['run_id'], 'omissions': manifest['quality']},
         })
     view = {'view_id': view_id, 'requested_time': utc_text(requested), 'expires_at': expires, 'mode': 'historical' if requested < now - datetime.timedelta(hours=1) else 'forecast', 'items': items}
+    _views_cache[view_id] = view
     directory = settings.SPATIAL_STORAGE_DIR / 'views'
     directory.mkdir(exist_ok=True)
     write_json(directory / f'{view_id}.json', view)
@@ -410,7 +484,11 @@ def create_view(time_selection, variables):
 def read_view(view_id):
     if not re.fullmatch(r'sp_[a-f0-9]{32}', view_id):
         raise ValueError('Invalid spatial view ID.')
-    view = json.loads((settings.SPATIAL_STORAGE_DIR / 'views' / f'{view_id}.json').read_text(encoding='utf-8'))
+    if view_id in _views_cache:
+        view = _views_cache[view_id]
+    else:
+        view = json.loads((settings.SPATIAL_STORAGE_DIR / 'views' / f'{view_id}.json').read_text(encoding='utf-8'))
+        _views_cache[view_id] = view
     if datetime.datetime.fromisoformat(view['expires_at'].replace('Z', '+00:00')) <= utc_now():
         raise TimeoutError('Spatial view expired.')
     return view
@@ -430,25 +508,35 @@ def point_result(view_id, longitude, latitude):
     return {'view_id': view_id, 'location': {'type': 'Point', 'coordinates': [longitude, latitude]}, 'items': items}
 
 
-def raster_png(run_id, variable, frame, size=1024):
+def raster_png(run_id, variable, frame, size=512):
     if variable not in VARIABLES:
         raise ValueError('Unsupported map variable.')
     directory, manifest = read_release(run_id)
     cache_dir = directory / 'raster_cache'
     cache_dir.mkdir(exist_ok=True)
-    cache_file = cache_dir / f'{variable}_{frame}_{size}.png'
+    config = legend(variable, run_id, int(round(frame)))
+    style_key = hashlib.sha256(json.dumps(config, sort_keys=True).encode('utf-8')).hexdigest()[:12]
+    cache_file = cache_dir / f'{variable}_{frame:.4f}_{size}_{style_key}.png'
+    cache_file_legacy = cache_dir / f'{variable}_{frame:.6f}_{size}_{style_key}.png'
     if cache_file.exists():
         return cache_file.read_bytes()
+    if cache_file_legacy.exists():
+        return cache_file_legacy.read_bytes()
 
-    west, south, east, north = manifest['bbox']
-    longitude = west + (np.arange(size) + .5) / size * (east - west)
-    latitude = north - (np.arange(size) + .5) / size * (north - south)
-    lon_grid, lat_grid = np.meshgrid(longitude, latitude)
-    coordinates = np.column_stack([lon_grid.ravel(), lat_grid.ravel()])
-    values = sample_release(run_id, frame, coordinates).get(variable)
+    grid_key = (run_id, size)
+    if grid_key in _raster_grid_cache:
+        coordinates = _raster_grid_cache[grid_key]
+    else:
+        west, south, east, north = manifest['bbox']
+        longitude = west + (np.arange(size) + .5) / size * (east - west)
+        latitude = north - (np.arange(size) + .5) / size * (north - south)
+        lon_grid, lat_grid = np.meshgrid(longitude, latitude)
+        coordinates = np.column_stack([lon_grid.ravel(), lat_grid.ravel()])
+        _raster_grid_cache[grid_key] = coordinates
+
+    values = sample_release(run_id, frame, coordinates, variable).get(variable)
     if values is None:
         raise ValueError('Variable is unavailable in this release.')
-    config = legend(variable, run_id, frame)
     colors = np.array([[int(color[offset:offset + 2], 16) for offset in (1, 3, 5)] for color in config['colors']])
     v_min = config['min']
     v_max = config['max']
@@ -466,4 +554,3 @@ def raster_png(run_id, variable, frame, size=1024):
     except Exception:
         pass
     return data
-

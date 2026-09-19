@@ -2,7 +2,7 @@
 
 import logging
 from typing import Literal
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from app.schemas.common import make_api_response
 
 from app.services.forecast_quota_manager import (
@@ -14,7 +14,11 @@ from app.services.forecast_fetch_service import (
     fetch_and_cache_daily_forecast,
     load_100_points,
 )
-from app.services.spatial_adjustment_service import solve_spatial_adjustment
+from app.services.cloak_tile_service import capture_tiles_with_cloak
+from app.services.spatial_adjustment_service import (
+    solve_spatial_adjustment,
+    publish_48h_urban_adjustment_release,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,15 +101,42 @@ def get_audit_report(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.post("/tiles/refresh")
+def refresh_weather_tiles(request: Request):
+    """Explicit maintenance endpoint: recapture QWeather map tiles via CloakBrowser.
+
+    瓦片抓取不消耗 API 配额，但浏览器自动化耗时可达数十秒，因此只在维护场景显式触发；
+    地图/平差查询接口只读取瓦片缓存（load_cached_tiles），绝不内嵌浏览器启动。
+    """
+    req_id = getattr(request.state, "request_id", "req_tiles_refresh")
+    try:
+        tiles = capture_tiles_with_cloak(headless=True, force_refresh=True)
+        data = {
+            "success": True,
+            "captured_layers": sorted(tiles.keys()),
+            "layers": {
+                key: {field: value for field, value in info.items() if field != "body"}
+                for key, info in tiles.items()
+            },
+        }
+        return make_api_response(data, req_id)
+    except Exception as exc:
+        logger.error("Tile refresh error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Tile capture failed: {exc}")
+
+
 @router.post("/sync")
 def sync_forecast(
     request: Request,
+    background_tasks: BackgroundTasks,
     force: bool = Query(False, description="Force refresh API calls ignoring daily cache")
 ):
     """Trigger 100-point daily forecast sync and spatial adjustment cache update."""
     req_id = getattr(request.state, "request_id", "req_sync")
     try:
         data = fetch_and_cache_daily_forecast(force_refresh=force)
+        # Enqueue full 48h urban spatial assimilation publication in background
+        background_tasks.add_task(publish_48h_urban_adjustment_release, force_refresh=False)
         quota = get_quota_status()
         res = {
             "success": True,

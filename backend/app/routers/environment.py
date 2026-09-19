@@ -6,7 +6,7 @@ from app.routers.spatial import translate_error
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.common import make_api_response
+from app.schemas.common import format_utc_z, make_api_response
 from app.schemas.environment import CreateViewRequest
 from app.services.env_service import (
     create_fixed_view,
@@ -80,13 +80,13 @@ def get_view_details(
         {
             "view_id": view.id,
             "scene_id": view.scene_id,
-            "requested_time": view.requested_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "resolved_time": view.resolved_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "requested_time": format_utc_z(view.requested_time),
+            "resolved_time": format_utc_z(view.resolved_time),
             "time_selection_kind": view.time_selection_kind,
             "release_selection_mode": view.release_selection_mode,
             "variables": view.variables,
             "pinned_releases": view.pinned_releases,
-            "expires_at": view.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": format_utc_z(view.expires_at),
         },
         request_id,
     )

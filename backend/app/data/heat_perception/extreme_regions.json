@@ -1,0 +1,266 @@
+{
+  "valid_time": "2026-09-17 12:00",
+  "lead_hours": 2,
+  "city_peak_utci": 29.11,
+  "city_peak_p_hot": 0.4615,
+  "top_extreme_grids": [
+    {
+      "grid_id": "r051_c067",
+      "district_name": "浦东新区",
+      "extreme_rank": 1,
+      "p_hot": 0.4615,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.9614,
+      "water_fraction": 0.0452,
+      "building_fraction": 0.0036,
+      "mitigation_delta_p": 0.1674
+    },
+    {
+      "grid_id": "r049_c085",
+      "district_name": "崇明区",
+      "extreme_rank": 2,
+      "p_hot": 0.4596,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.9898,
+      "water_fraction": 0.0619,
+      "building_fraction": 0.0,
+      "mitigation_delta_p": 0.1654
+    },
+    {
+      "grid_id": "r083_c032",
+      "district_name": "松江区",
+      "extreme_rank": 3,
+      "p_hot": 0.4524,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.7865,
+      "water_fraction": 0.0,
+      "building_fraction": 0.0,
+      "mitigation_delta_p": 0.1583
+    },
+    {
+      "grid_id": "r049_c084",
+      "district_name": "崇明区",
+      "extreme_rank": 4,
+      "p_hot": 0.4231,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.6437,
+      "water_fraction": 0.0134,
+      "building_fraction": 0.0,
+      "mitigation_delta_p": 0.129
+    },
+    {
+      "grid_id": "r021_c062",
+      "district_name": "崇明区",
+      "extreme_rank": 5,
+      "p_hot": 0.4223,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.7241,
+      "water_fraction": 0.0461,
+      "building_fraction": 0.001,
+      "mitigation_delta_p": 0.1281
+    },
+    {
+      "grid_id": "r082_c032",
+      "district_name": "松江区",
+      "extreme_rank": 6,
+      "p_hot": 0.4088,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.7646,
+      "water_fraction": 0.0892,
+      "building_fraction": 0.0133,
+      "mitigation_delta_p": 0.1147
+    },
+    {
+      "grid_id": "r084_c065",
+      "district_name": "闵行区",
+      "extreme_rank": 7,
+      "p_hot": 0.4076,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.7491,
+      "water_fraction": 0.0844,
+      "building_fraction": 0.018,
+      "mitigation_delta_p": 0.1135
+    },
+    {
+      "grid_id": "r057_c069",
+      "district_name": "杨浦区",
+      "extreme_rank": 8,
+      "p_hot": 0.4036,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.6119,
+      "water_fraction": 0.0467,
+      "building_fraction": 0.0023,
+      "mitigation_delta_p": 0.1094
+    },
+    {
+      "grid_id": "r051_c068",
+      "district_name": "浦东新区",
+      "extreme_rank": 9,
+      "p_hot": 0.3946,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.4554,
+      "water_fraction": 0.0084,
+      "building_fraction": 0.0007,
+      "mitigation_delta_p": 0.1004
+    },
+    {
+      "grid_id": "r085_c066",
+      "district_name": "闵行区",
+      "extreme_rank": 10,
+      "p_hot": 0.3906,
+      "utci_c": 29.11,
+      "risk_level": "moderate",
+      "green_fraction": 0.4705,
+      "water_fraction": 0.0192,
+      "building_fraction": 0.0142,
+      "mitigation_delta_p": 0.0964
+    }
+  ],
+  "district_rankings": [
+    {
+      "district_name": "崇明区",
+      "mean_p_hot": 0.3297,
+      "max_p_hot": 0.4596,
+      "mean_utci_c": 29.11,
+      "grid_count": 30,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "宝山区",
+      "mean_p_hot": 0.326,
+      "max_p_hot": 0.3728,
+      "mean_utci_c": 29.11,
+      "grid_count": 24,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "闵行区",
+      "mean_p_hot": 0.3197,
+      "max_p_hot": 0.4076,
+      "mean_utci_c": 29.11,
+      "grid_count": 42,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "松江区",
+      "mean_p_hot": 0.3196,
+      "max_p_hot": 0.4524,
+      "mean_utci_c": 29.11,
+      "grid_count": 56,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "嘉定区",
+      "mean_p_hot": 0.3195,
+      "max_p_hot": 0.3295,
+      "mean_utci_c": 29.11,
+      "grid_count": 17,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "长宁区",
+      "mean_p_hot": 0.3161,
+      "max_p_hot": 0.3609,
+      "mean_utci_c": 29.11,
+      "grid_count": 21,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "金山区",
+      "mean_p_hot": 0.3147,
+      "max_p_hot": 0.3761,
+      "mean_utci_c": 29.11,
+      "grid_count": 18,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "奉贤区",
+      "mean_p_hot": 0.3106,
+      "max_p_hot": 0.3798,
+      "mean_utci_c": 29.11,
+      "grid_count": 21,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "普陀区",
+      "mean_p_hot": 0.3086,
+      "max_p_hot": 0.3318,
+      "mean_utci_c": 29.11,
+      "grid_count": 19,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "静安区",
+      "mean_p_hot": 0.308,
+      "max_p_hot": 0.3457,
+      "mean_utci_c": 29.11,
+      "grid_count": 20,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "浦东新区",
+      "mean_p_hot": 0.3074,
+      "max_p_hot": 0.4615,
+      "mean_utci_c": 29.11,
+      "grid_count": 110,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "徐汇区",
+      "mean_p_hot": 0.3045,
+      "max_p_hot": 0.3581,
+      "mean_utci_c": 29.11,
+      "grid_count": 30,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "虹口区",
+      "mean_p_hot": 0.3037,
+      "max_p_hot": 0.3219,
+      "mean_utci_c": 29.11,
+      "grid_count": 13,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "杨浦区",
+      "mean_p_hot": 0.298,
+      "max_p_hot": 0.4036,
+      "mean_utci_c": 29.11,
+      "grid_count": 17,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "青浦区",
+      "mean_p_hot": 0.2847,
+      "max_p_hot": 0.3756,
+      "mean_utci_c": 29.11,
+      "grid_count": 38,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "黄浦区",
+      "mean_p_hot": 0.2762,
+      "max_p_hot": 0.321,
+      "mean_utci_c": 29.11,
+      "grid_count": 20,
+      "risk_level": "moderate"
+    },
+    {
+      "district_name": "昆山市",
+      "mean_p_hot": 0.0903,
+      "max_p_hot": 0.0903,
+      "mean_utci_c": 29.11,
+      "grid_count": 1,
+      "risk_level": "moderate"
+    }
+  ]
+}

@@ -13,13 +13,15 @@ const records = ref<CheckIn[]>([]);
 const loading = ref(false);
 const error = ref('');
 const deletingId = ref<string | null>(null);
+const nextCursor = ref<string | null>(null);
 
-async function loadRecords() {
+async function loadRecords(append = false) {
   loading.value = true;
   error.value = '';
   try {
-    const res = await api.myRecords();
-    records.value = res.items;
+    const res = await api.myRecords(append ? nextCursor.value || undefined : undefined);
+    records.value = append ? [...records.value, ...res.items] : res.items;
+    nextCursor.value = res.next_cursor;
   } catch (err) {
     error.value = errorMessage(err);
   } finally {
@@ -53,7 +55,7 @@ async function handleDelete(record: CheckIn) {
     <div class="space-y-4">
       <div class="flex items-center justify-between text-xs text-muted">
         <span>共 {{ records.length }} 条个人打卡记录</span>
-        <button class="text-button" :disabled="loading" @click="loadRecords">
+        <button class="text-button" :disabled="loading" @click="loadRecords()">
           <AppIcon name="clock" :size="14" />
           刷新列表
         </button>
@@ -119,6 +121,9 @@ async function handleDelete(record: CheckIn) {
             </span>
           </div>
         </div>
+        <button v-if="nextCursor" class="button w-full justify-center" :disabled="loading" @click="loadRecords(true)">
+          加载更多已保存的记录
+        </button>
       </div>
     </div>
   </AppDialog>

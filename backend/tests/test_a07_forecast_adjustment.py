@@ -15,6 +15,8 @@ from app.services.spatial_adjustment_service import (
     detect_and_filter_outliers,
     solve_spatial_adjustment,
     VIRTUAL_BOUNDARY_ANCHORS,
+    VARIABLE_OUTLIER_THRESHOLDS,
+    VARIABLE_ALIAS_MAP,
 )
 from app.services.cloak_tile_service import decode_qweather_tile
 
@@ -69,3 +71,72 @@ def test_virtual_anchors():
         # Outside municipal perimeter, in regional outer waters and plains
         assert 120.40 <= anchor["lon"] <= 122.50
         assert 30.40 <= anchor["lat"] <= 32.20
+
+
+def test_variable_outlier_thresholds_calibration():
+    """Verify that variable outlier thresholds match physical unit requirements."""
+    assert VARIABLE_OUTLIER_THRESHOLDS["temperature_2m"] == 3.8
+    assert VARIABLE_OUTLIER_THRESHOLDS["dew_point"] == 3.8
+    assert VARIABLE_OUTLIER_THRESHOLDS["relative_humidity_2m"] == 20.0
+    assert VARIABLE_OUTLIER_THRESHOLDS["wind_speed_10m"] == 5.0
+
+    assert VARIABLE_ALIAS_MAP["tmp"] == "temperature_2m"
+    assert VARIABLE_ALIAS_MAP["rh"] == "relative_humidity_2m"
+    assert VARIABLE_ALIAS_MAP["wind"] == "wind_speed_10m"
+    assert VARIABLE_ALIAS_MAP["dpt"] == "dew_point"
+
+
+def test_outlier_detection_relative_humidity():
+    """Verify relative humidity gross error rejection (20% tolerance).
+    
+    Normal microclimate fluctuations (~8% RH difference) must NOT be rejected.
+    Gross errors (e.g. +35% sensor fault) MUST be identified and rejected.
+    """
+    mock_points = [
+        {"id": f"RH{i:02d}", "name": f"Pt{i}", "lon": 121.40 + (i % 5) * 0.05, "lat": 31.20 + (i // 5) * 0.05}
+        for i in range(25)
+    ]
+    # Normal urban microclimate humidity residuals: baseline 5%, with benign 8% variation at point 1
+    residuals = np.full(25, 5.0)
+    residuals[1] = 13.0  # +8% local variation (e.g. near Huangpu river / park)
+    # Gross errors at index 5 (+35% fault) and index 18 (-30% fault)
+    residuals[5] = 40.0
+    residuals[18] = -25.0
+
+    base_thresh = VARIABLE_OUTLIER_THRESHOLDS["relative_humidity_2m"]
+    inliers_mask, rejected_ids = detect_and_filter_outliers(
+        mock_points, residuals, base_threshold=base_thresh
+    )
+    # Point 1 (8% deviation) must be preserved as inlier
+    assert inliers_mask[1] is True or inliers_mask[1] == 1
+    # Points 5 and 18 must be rejected
+    assert not inliers_mask[5]
+    assert not inliers_mask[18]
+    assert "RH05" in rejected_ids
+    assert "RH18" in rejected_ids
+    assert inliers_mask.sum() == 23
+
+
+def test_outlier_detection_wind_speed():
+    """Verify wind speed gross error rejection (5.0 m/s tolerance).
+    
+    Street canyon roughness differences (~2 m/s) must NOT be rejected.
+    Extreme wind gusts or sensor faults (+12 m/s) MUST be filtered.
+    """
+    mock_points = [
+        {"id": f"W{i:02d}", "name": f"Pt{i}", "lon": 121.40 + (i % 5) * 0.05, "lat": 31.20 + (i // 5) * 0.05}
+        for i in range(25)
+    ]
+    residuals = np.full(25, 1.2)
+    residuals[2] = 3.2  # +2 m/s urban street canyon variation
+    residuals[7] = 14.0  # +12.8 m/s gross error / pulse
+
+    base_thresh = VARIABLE_OUTLIER_THRESHOLDS["wind_speed_10m"]
+    inliers_mask, rejected_ids = detect_and_filter_outliers(
+        mock_points, residuals, base_threshold=base_thresh
+    )
+    assert inliers_mask[2] is True or inliers_mask[2] == 1
+    assert not inliers_mask[7]
+    assert "W07" in rejected_ids
+    assert inliers_mask.sum() == 24
+

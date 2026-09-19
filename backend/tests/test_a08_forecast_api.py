@@ -60,3 +60,32 @@ def test_get_audit_report():
     assert data["hour_index"] == 3
     assert data["audit_metrics"]["test_points_count"] == 18
     assert data["control_points_summary"]["total_count"] == 126
+
+
+def test_get_fused_grid_humidity_and_wind():
+    """Verify /api/v1/forecast/grid works properly for relative_humidity_2m and wind_speed_10m."""
+    resp_rh = client.get("/api/v1/forecast/grid?hour=0&variable=relative_humidity_2m&smooth=0.08")
+    assert resp_rh.status_code == 200
+    data_rh = resp_rh.json()["data"]
+    assert data_rh["variable"] == "relative_humidity_2m"
+    assert "audit_metrics" in data_rh
+
+    resp_wind = client.get("/api/v1/forecast/grid?hour=0&variable=wind_speed_10m&smooth=0.08")
+    assert resp_wind.status_code == 200
+    data_wind = resp_wind.json()["data"]
+    assert data_wind["variable"] == "wind_speed_10m"
+    assert "audit_metrics" in data_wind
+
+
+def test_sync_forecast_cached():
+    """Verify POST /api/v1/forecast/sync returns cached status successfully without consuming quota."""
+    resp = client.post("/api/v1/forecast/sync?force=false")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["success"] is True
+    assert data["total_points"] == 144
+    assert data["success_points"] == 144
+    assert "quota_status" in data
+    assert data["quota_status"]["remaining_safe_quota"] > 0
+
+

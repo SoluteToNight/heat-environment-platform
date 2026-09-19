@@ -14,8 +14,9 @@ def hash_password(plain: str) -> str:
 
 def init_platform_db():
     """Create schema, tables, and default seed data."""
-    # 1. Ensure schema exists
+    # 1. Ensure extension & schema exist
     with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME};"))
 
     # 2. Create tables

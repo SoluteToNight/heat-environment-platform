@@ -28,7 +28,7 @@ from app.config import settings
 from app.services.cloak_tile_service import (
     decode_qweather_tile,
     sample_tile_at_coords,
-    capture_tiles_with_cloak,
+    load_cached_tiles,
 )
 from app.services.forecast_fetch_service import (
     load_100_points,
@@ -48,6 +48,17 @@ EXCHANGE = Transformer.from_crs("EPSG:32651", "EPSG:4326", always_xy=True)
 # Full Municipal Bounds: West: 120.85, South: 30.65, East: 122.25, North: 31.88 (~135km x 135km)
 SHANGHAI_BOUNDS = tuple(settings.SHANGHAI_BBOX)
 URBAN_BOUNDS = SHANGHAI_BOUNDS  # Backward-compatible alias across modules
+
+
+def hourly_value(point: dict, variable_name: str, hour_index: int):
+    """Read one forecast value; missing or out-of-range yields None — never a fabricated number.
+
+    点位各字段长度可能因逐点抓取时刻不同而不一致，越界按缺测处理。
+    """
+    series = point["hourly"].get(variable_name) or []
+    if hour_index < 0 or hour_index >= len(series):
+        return None
+    return series[hour_index]
 
 # 12 Far-field Virtual Boundary Anchors across surrounding regional waters and outer plains (Zero-residual constraints)
 VIRTUAL_BOUNDARY_ANCHORS = [
@@ -93,6 +104,25 @@ def generate_500m_urban_grid(grid_step: float = 1000.0) -> tuple[np.ndarray, np.
     grid_ys_km = yy / 1000.0
 
     return grid_lons, grid_lats, grid_xs_km, grid_ys_km, coords_list
+
+
+# Multi-variable outlier rejection thresholds calibrated to physical meteorological units:
+# - Temperature / Dew Point: 3.8 °C (accommodates high-density urban heat island gradients)
+# - Relative Humidity: 20.0 % (allows water-body / urban vegetation microclimate variations)
+# - Wind Speed: 5.0 m/s (accommodates urban street canyon roughness variations)
+VARIABLE_OUTLIER_THRESHOLDS: dict[str, float] = {
+    "temperature_2m": 3.8,
+    "dew_point": 3.8,
+    "relative_humidity_2m": 20.0,
+    "wind_speed_10m": 5.0,
+}
+
+VARIABLE_ALIAS_MAP: dict[str, str] = {
+    "tmp": "temperature_2m",
+    "rh": "relative_humidity_2m",
+    "wind": "wind_speed_10m",
+    "dpt": "dew_point",
+}
 
 
 def detect_and_filter_outliers(
@@ -202,7 +232,14 @@ def solve_spatial_adjustment(
         "dew_point": "dpt-2m",
     }
     short_var = tile_var_map.get(variable_name, "tmp-2m")
-    tiles = capture_tiles_with_cloak(headless=True, force_refresh=False)
+    # 只读瓦片缓存，绝不在查询请求内启动浏览器自动化（一次抓取可达数十秒）。
+    # 缓存缺失/过期时由 POST /api/v1/forecast/tiles/refresh 或后台任务负责刷新。
+    tiles = load_cached_tiles() or {}
+    if not tiles:
+        logger.warning(
+            "No fresh cached QWeather tiles; falling back to constant regional "
+            "background. Trigger POST /api/v1/forecast/tiles/refresh to recapture."
+        )
 
     if short_var in tiles:
         tile_info = tiles[short_var]
@@ -214,26 +251,47 @@ def solve_spatial_adjustment(
         z, x, y = 8, 214, 106
         tile_matrix = np.full((257, 257), 24.5, dtype=float)
 
-    # 3. Sample tile background values at 90 control points
+    # 3. Sample tile background values at control points
     ctrl_coords = [(p["lon"], p["lat"]) for p in control_pts]
     ctrl_bg_values = sample_tile_at_coords(tile_matrix, z, x, y, ctrl_coords)
 
-    # Extract API forecast values at hour_index
-    ctrl_api_values = []
-    for p in control_pts:
-        series = p["hourly"].get(variable_name, [])
-        val = series[hour_index] if hour_index < len(series) else series[0]
-        ctrl_api_values.append(val if val is not None else 25.0)
-    ctrl_api_values = np.array(ctrl_api_values, dtype=float)
+    # Extract API forecast values at hour_index; missing values stay NaN and are
+    # excluded from the fit — substituting them (e.g. with 25.0) would fabricate data.
+    ctrl_api_values = np.array(
+        [hourly_value(p, variable_name, hour_index) for p in control_pts],
+        dtype=float,
+    )
 
     # 4. Compute observed residuals v_i = T_api - T_bg
     observed_residuals = ctrl_api_values - ctrl_bg_values
 
-    # 5. Robust gross-error detection (Dynamic Huber + IQR)
-    inliers_mask, rejected_ids = detect_and_filter_outliers(control_pts, observed_residuals, base_threshold=3.8)
-    
+    # 5. Missing-value screening (缺测剔除) + robust gross-error detection (Dynamic Huber + IQR)
+    observed_mask = np.isfinite(observed_residuals)
+    missing_ids = [control_pts[i]["id"] for i in range(len(control_pts)) if not observed_mask[i]]
+    if missing_ids:
+        logger.warning(
+            "Missing %s values at control points %s for hour %d; excluded from fit.",
+            variable_name, missing_ids, hour_index,
+        )
+    obs_points = [p for i, p in enumerate(control_pts) if observed_mask[i]]
+    obs_residuals = observed_residuals[observed_mask]
+    if len(obs_points) < 3:
+        raise ValueError(
+            f"Only {len(obs_points)} control points have usable {variable_name} values at "
+            f"hour {hour_index}; refusing to fit on fabricated data."
+        )
+    canonical_var = VARIABLE_ALIAS_MAP.get(variable_name, variable_name)
+    var_threshold = VARIABLE_OUTLIER_THRESHOLDS.get(canonical_var, 3.8)
+    obs_inliers, rejected_ids = detect_and_filter_outliers(
+        obs_points, obs_residuals, base_threshold=var_threshold
+    )
+    inliers_mask = np.zeros(len(control_pts), dtype=bool)
+    inliers_mask[np.where(observed_mask)[0][obs_inliers]] = True
+
     valid_ctrl_pts = [p for i, p in enumerate(control_pts) if inliers_mask[i]]
     valid_residuals = observed_residuals[inliers_mask]
+    if len(valid_ctrl_pts) == 0:
+        raise ValueError("All control-point residuals were rejected as gross errors; refusing to fit.")
 
     # 6. Assemble TPS-RBF sample points in ISOTROPIC UTM KILOMETERS (EPSG:32651)
     ctrl_projected_km = [PROJECT.transform(p["lon"], p["lat"]) for p in valid_ctrl_pts]
@@ -273,12 +331,10 @@ def solve_spatial_adjustment(
     test_coords = [(p["lon"], p["lat"]) for p in test_pts]
     test_bg_values = sample_tile_at_coords(tile_matrix, z, x, y, test_coords)
 
-    test_api_values = []
-    for p in test_pts:
-        series = p["hourly"].get(variable_name, [])
-        val = series[hour_index] if hour_index < len(series) else series[0]
-        test_api_values.append(val if val is not None else 25.0)
-    test_api_values = np.array(test_api_values, dtype=float)
+    test_api_values = np.array(
+        [hourly_value(p, variable_name, hour_index) for p in test_pts],
+        dtype=float,
+    )
 
     # Sample TPS residual surface at test points in kilometer space
     test_projected_km = [PROJECT.transform(p["lon"], p["lat"]) for p in test_pts]
@@ -289,13 +345,23 @@ def solve_spatial_adjustment(
     raw_test_fused = test_bg_values + test_interpolated_residuals
     test_fused_values = enforce_physical_bounds(raw_test_fused, variable_name)
 
-    # Post-adjustment blind test errors
+    # Post-adjustment blind test errors — test points with missing observations are
+    # excluded from the metrics instead of being filled with placeholder values.
     test_errors = test_fused_values - test_api_values
-    test_mae = float(np.mean(np.abs(test_errors)))
-    test_rmse = float(np.sqrt(np.mean(test_errors ** 2)))
+    test_valid_mask = np.isfinite(test_errors)
+    test_missing_ids = [test_pts[i]["id"] for i in range(len(test_pts)) if not test_valid_mask[i]]
+    if test_valid_mask.any():
+        valid_errors = test_errors[test_valid_mask]
+        test_mae = float(np.mean(np.abs(valid_errors)))
+        test_rmse = float(np.sqrt(np.mean(valid_errors ** 2)))
+        max_abs_error = float(np.max(np.abs(valid_errors)))
+        mean_error = float(np.mean(valid_errors))
+    else:
+        test_mae = test_rmse = max_abs_error = mean_error = None
 
     test_audit_details = []
     for idx, p in enumerate(test_pts):
+        ok = bool(test_valid_mask[idx])
         test_audit_details.append({
             "id": p["id"],
             "name": p["name"],
@@ -303,10 +369,11 @@ def solve_spatial_adjustment(
             "lon": p["lon"],
             "lat": p["lat"],
             "tag": p.get("tag", ""),
-            "api_observed": round(float(test_api_values[idx]), 2),
+            "api_observed": round(float(test_api_values[idx]), 2) if ok else None,
             "tile_background": round(float(test_bg_values[idx]), 2),
             "fused_estimate": round(float(test_fused_values[idx]), 2),
-            "residual_error": round(float(test_errors[idx]), 2)
+            "residual_error": round(float(test_errors[idx]), 2) if ok else None,
+            "value_status": "valid" if ok else "missing",
         })
 
     # Forecast timestamp
@@ -336,15 +403,19 @@ def solve_spatial_adjustment(
         },
         "audit_metrics": {
             "test_points_count": len(test_pts),
-            "test_mae": round(test_mae, 3),
-            "test_rmse": round(test_rmse, 3),
-            "max_abs_error": round(float(np.max(np.abs(test_errors))), 3),
-            "mean_error": round(float(np.mean(test_errors)), 3),
+            "valid_test_points_count": int(test_valid_mask.sum()),
+            "missing_value_ids": test_missing_ids,
+            "test_mae": round(test_mae, 3) if test_mae is not None else None,
+            "test_rmse": round(test_rmse, 3) if test_rmse is not None else None,
+            "max_abs_error": round(max_abs_error, 3) if max_abs_error is not None else None,
+            "mean_error": round(mean_error, 3) if mean_error is not None else None,
             "test_details": test_audit_details
         },
         "control_points_summary": {
             "total_count": len(control_pts),
             "valid_inliers_count": len(valid_ctrl_pts),
+            "missing_values_count": len(missing_ids),
+            "missing_value_ids": missing_ids,
             "rejected_outliers": rejected_ids,
             "mean_residual": round(float(np.mean(valid_residuals)), 3),
             "min_residual": round(float(np.min(valid_residuals)), 3),
@@ -398,8 +469,10 @@ def publish_48h_urban_adjustment_release(force_refresh: bool = False) -> dict:
     grid_lons, grid_lats, grid_xs_km, grid_ys_km, grid_coords = generate_500m_urban_grid()
     n_lats, n_lons = grid_lons.shape
     
-    # 3. Decoded background tiles
-    tiles = capture_tiles_with_cloak(headless=True, force_refresh=False)
+    # 3. Decoded background tiles（只读缓存；浏览器抓取由维护端点/后台任务触发）
+    tiles = load_cached_tiles() or {}
+    if not tiles:
+        logger.warning("No fresh cached QWeather tiles; falling back to constant regional background.")
     var_tile_map = {
         "temperature_2m": "tmp-2m",
         "relative_humidity_2m": "rh-2m",
@@ -461,52 +534,123 @@ def publish_48h_urban_adjustment_release(force_refresh: bool = False) -> dict:
     cube_utci = np.zeros((n_times, n_lats, n_lons), dtype=np.float32)
 
     test_temp_errors = []
+    missing_test_evaluations = 0
+
+    def assemble_fit_inputs(
+        values,
+        bg_values,
+        detect_outliers: bool = True,
+        variable_name: str | None = None,
+        base_threshold: float | None = None,
+    ):
+        """Assemble TPS-RBF fit inputs for one variable at one hour.
+
+        Missing (None/NaN) control values are excluded outright — never substituted —
+        because a fabricated residual would contaminate the whole spline surface.
+        """
+        vals = np.asarray(values, dtype=float)
+        residuals = vals - np.asarray(bg_values, dtype=float)
+        obs_idx = np.where(np.isfinite(residuals))[0]
+        if len(obs_idx) < 3:
+            return None
+        obs_points = [control_pts[i] for i in obs_idx]
+        obs_residuals = residuals[obs_idx]
+        if detect_outliers and len(obs_points) >= 6:
+            canonical_var = VARIABLE_ALIAS_MAP.get(variable_name, variable_name) if variable_name else None
+            thresh = (
+                base_threshold
+                if base_threshold is not None
+                else (VARIABLE_OUTLIER_THRESHOLDS.get(canonical_var, 3.8) if canonical_var else 3.8)
+            )
+            inliers, _ = detect_and_filter_outliers(obs_points, obs_residuals, base_threshold=thresh)
+        else:
+            inliers = np.ones(len(obs_points), dtype=bool)
+        keep = obs_idx[inliers]
+        xs = [fit_xs_ctrl_km[i] for i in keep] + anchor_xs_km
+        ys = [fit_ys_ctrl_km[i] for i in keep] + anchor_ys_km
+        res = list(residuals[keep]) + [0.0] * len(anchor_xs_km)
+        return xs, ys, res
+
+    def fuse(fit_inputs, bg_values, variable_for_bounds, temp_field=None):
+        if fit_inputs is None:
+            return None
+        rbf = Rbf(fit_inputs[0], fit_inputs[1], fit_inputs[2], function="thin_plate", smooth=0.5)
+        field = enforce_physical_bounds(
+            bg_values + rbf(grid_xs_km, grid_ys_km), variable_for_bounds, temp_field=temp_field
+        )
+        return field, rbf
 
     # 6. Execute 48-hour space-time assimilation
     logger.info("Computing 48-hour 500m assimilation for %d time steps...", n_times)
     for h in range(n_times):
-        # A. Air Temperature
-        c_vals_ta = np.array([p["hourly"]["temperature_2m"][h] for p in control_pts], dtype=float)
-        res_ta = c_vals_ta - ctrl_bg["temperature_2m"]
-        inliers_ta, _ = detect_and_filter_outliers(control_pts, res_ta, base_threshold=3.8)
-        
-        cur_fit_xs = [fit_xs_ctrl_km[i] for i, ok in enumerate(inliers_ta) if ok] + anchor_xs_km
-        cur_fit_ys = [fit_ys_ctrl_km[i] for i, ok in enumerate(inliers_ta) if ok] + anchor_ys_km
-        cur_fit_res = list(res_ta[inliers_ta]) + [0.0] * len(anchor_xs_km)
-        
-        rbf_ta = Rbf(cur_fit_xs, cur_fit_ys, cur_fit_res, function="thin_plate", smooth=0.5)
-        fused_ta = grid_bg["temperature_2m"] + rbf_ta(grid_xs_km, grid_ys_km)
-        fused_ta = enforce_physical_bounds(fused_ta, "temperature_2m")
-        cube_ta[h] = fused_ta.astype(np.float32)
-        
-        # Test audit for Ta
-        t_vals_ta = np.array([p["hourly"]["temperature_2m"][h] for p in test_pts], dtype=float)
-        t_fused_ta = test_bg["temperature_2m"] + rbf_ta(test_xs_km, test_ys_km)
-        test_temp_errors.extend(t_fused_ta - t_vals_ta)
+        # A. Air Temperature（动态 Huber+IQR 抗差，3.8 °C 量纲容差；缺测控制点一律剔除，不造数）
+        c_vals_ta = np.array([hourly_value(p, "temperature_2m", h) for p in control_pts], dtype=float)
+        fused_ta_result = fuse(
+            assemble_fit_inputs(
+                c_vals_ta, ctrl_bg["temperature_2m"], detect_outliers=True, variable_name="temperature_2m"
+            ),
+            grid_bg["temperature_2m"], "temperature_2m",
+        )
+        if fused_ta_result is None:
+            logger.warning("Hour %d: too few usable temperature control values; frame stored as no-data (NaN).", h)
+            cube_ta[h] = np.float32(np.nan)
+            missing_test_evaluations += len(test_pts)
+        else:
+            fused_ta, rbf_ta = fused_ta_result
+            cube_ta[h] = fused_ta.astype(np.float32)
+            # Test audit for Ta（缺测测试点不计入误差统计）
+            t_vals_ta = np.array([hourly_value(p, "temperature_2m", h) for p in test_pts], dtype=float)
+            errs = test_bg["temperature_2m"] + rbf_ta(test_xs_km, test_ys_km) - t_vals_ta
+            finite_errs = errs[np.isfinite(errs)]
+            missing_test_evaluations += int(errs.size - finite_errs.size)
+            test_temp_errors.extend(finite_errs)
 
-        # B. Relative Humidity
-        c_vals_rh = np.array([p["hourly"]["relative_humidity_2m"][h] for p in control_pts], dtype=float)
-        res_rh = c_vals_rh - ctrl_bg["relative_humidity_2m"]
-        rbf_rh = Rbf(fit_xs_ctrl_km + anchor_xs_km, fit_ys_ctrl_km + anchor_ys_km, list(res_rh) + [0.0] * len(anchor_xs_km), function="thin_plate", smooth=0.5)
-        fused_rh = grid_bg["relative_humidity_2m"] + rbf_rh(grid_xs_km, grid_ys_km)
-        fused_rh = enforce_physical_bounds(fused_rh, "relative_humidity_2m")
-        cube_rh[h] = fused_rh.astype(np.float32)
+        # B. Relative Humidity（动态 Huber+IQR 抗差，20.0 % 量纲容差；缺测控制点剔除）
+        c_vals_rh = np.array([hourly_value(p, "relative_humidity_2m", h) for p in control_pts], dtype=float)
+        fused_rh_result = fuse(
+            assemble_fit_inputs(
+                c_vals_rh, ctrl_bg["relative_humidity_2m"], detect_outliers=True, variable_name="relative_humidity_2m"
+            ),
+            grid_bg["relative_humidity_2m"], "relative_humidity_2m",
+        )
+        if fused_rh_result is None:
+            logger.warning("Hour %d: too few usable humidity control values; frame stored as no-data (NaN).", h)
+            cube_rh[h] = np.float32(np.nan)
+            fused_rh = cube_rh[h]
+        else:
+            fused_rh, _ = fused_rh_result
+            cube_rh[h] = fused_rh.astype(np.float32)
 
-        # C. Wind Speed
-        c_vals_wind = np.array([p["hourly"]["wind_speed_10m"][h] for p in control_pts], dtype=float)
-        res_wind = c_vals_wind - ctrl_bg["wind_speed_10m"]
-        rbf_wind = Rbf(fit_xs_ctrl_km + anchor_xs_km, fit_ys_ctrl_km + anchor_ys_km, list(res_wind) + [0.0] * len(anchor_xs_km), function="thin_plate", smooth=0.5)
-        fused_wind = grid_bg["wind_speed_10m"] + rbf_wind(grid_xs_km, grid_ys_km)
-        fused_wind = enforce_physical_bounds(fused_wind, "wind_speed_10m")
-        cube_wind[h] = fused_wind.astype(np.float32)
+        # C. Wind Speed（动态 Huber+IQR 抗差，5.0 m/s 量纲容差；缺测控制点剔除）
+        c_vals_wind = np.array([hourly_value(p, "wind_speed_10m", h) for p in control_pts], dtype=float)
+        fused_wind_result = fuse(
+            assemble_fit_inputs(
+                c_vals_wind, ctrl_bg["wind_speed_10m"], detect_outliers=True, variable_name="wind_speed_10m"
+            ),
+            grid_bg["wind_speed_10m"], "wind_speed_10m",
+        )
+        if fused_wind_result is None:
+            logger.warning("Hour %d: too few usable wind control values; frame stored as no-data (NaN).", h)
+            cube_wind[h] = np.float32(np.nan)
+            fused_wind = cube_wind[h]
+        else:
+            fused_wind, _ = fused_wind_result
+            cube_wind[h] = fused_wind.astype(np.float32)
 
-        # D. Dew Point
-        c_vals_dpt = np.array([p["hourly"]["dew_point"][h] for p in control_pts], dtype=float)
-        res_dpt = c_vals_dpt - ctrl_bg["dew_point"]
-        rbf_dpt = Rbf(fit_xs_ctrl_km + anchor_xs_km, fit_ys_ctrl_km + anchor_ys_km, list(res_dpt) + [0.0] * len(anchor_xs_km), function="thin_plate", smooth=0.5)
-        fused_dpt = grid_bg["dew_point"] + rbf_dpt(grid_xs_km, grid_ys_km)
-        fused_dpt = enforce_physical_bounds(fused_dpt, "dew_point", temp_field=fused_ta)
-        cube_dpt[h] = fused_dpt.astype(np.float32)
+        # D. Dew Point（动态 Huber+IQR 抗差，3.8 °C 量纲容差；缺测剔除；temp_field 约束不超饱和）
+        c_vals_dpt = np.array([hourly_value(p, "dew_point", h) for p in control_pts], dtype=float)
+        fused_dpt_result = fuse(
+            assemble_fit_inputs(
+                c_vals_dpt, ctrl_bg["dew_point"], detect_outliers=True, variable_name="dew_point"
+            ),
+            grid_bg["dew_point"], "dew_point", temp_field=fused_ta,
+        )
+        if fused_dpt_result is None:
+            logger.warning("Hour %d: too few usable dew-point control values; frame stored as no-data (NaN).", h)
+            cube_dpt[h] = np.float32(np.nan)
+        else:
+            fused_dpt, _ = fused_dpt_result
+            cube_dpt[h] = fused_dpt.astype(np.float32)
 
         # E. Solar Irradiance
         moment = datetime.fromisoformat(raw_times[h])
@@ -520,7 +664,7 @@ def publish_48h_urban_adjustment_release(force_refresh: bool = False) -> dict:
             hourly_solar = np.clip(grid_solar_bg * scale * 2.2, 0.0, 1100.0).astype(np.float32)
         cube_solar[h] = hourly_solar
 
-        # F. Bioclimatic UTCI & Tmrt
+        # F. Bioclimatic UTCI & Tmrt（输入含 NaN 的像元 UTCI 亦为 NaN → 前端渲染为无数据）
         fused_tmrt = calculate_tmrt(fused_ta, hourly_solar)
         fused_utci, _ = calculate_utci(fused_ta, fused_rh, fused_wind, fused_tmrt)
         cube_utci[h] = fused_utci.astype(np.float32)
@@ -543,10 +687,14 @@ def publish_48h_urban_adjustment_release(force_refresh: bool = False) -> dict:
     if boundary_src.exists():
         (output_dir / "boundary.geojson").write_bytes(boundary_src.read_bytes())
 
-    # 9. Audit statistics
-    overall_mae = float(np.mean(np.abs(test_temp_errors)))
-    overall_rmse = float(np.sqrt(np.mean(np.array(test_temp_errors) ** 2)))
-    max_err = float(np.max(np.abs(test_temp_errors)))
+    # 9. Audit statistics（缺测样本被剔除后，本轮可能没有有效盲测值）
+    if test_temp_errors:
+        errors_array = np.array(test_temp_errors)
+        overall_mae = float(np.mean(np.abs(errors_array)))
+        overall_rmse = float(np.sqrt(np.mean(errors_array ** 2)))
+        max_err = float(np.max(np.abs(errors_array)))
+    else:
+        overall_mae = overall_rmse = max_err = None
 
     # 10. Write manifest.json
     manifest = {
@@ -575,23 +723,38 @@ def publish_48h_urban_adjustment_release(force_refresh: bool = False) -> dict:
         "spatial_support": f"上海市全域 1000m (约0.01°) 规则网格（EPSG:32651 平面公里平差降尺度），完整覆盖中心城区、浦东新区、宝山、嘉定、青浦、松江、金山、奉贤及崇明三岛；集成 {len(control_pts)} 处控制点与 {len(test_pts)} 处独立测试点验后精度闭环，逐像元严格求解 Bröde et al. 通用热气候指数 (UTCI)。",
         "quality": [
             "1000m (~0.01°) municipal whole region assimilation in metric EPSG:32651 UTM kilometer coordinates.",
-            "Dynamic Huber + IQR outlier detection with 12 far-field outer marine/plain boundary damping anchors.",
+            "Multi-variable Dynamic Huber + IQR outlier detection calibrated per physical unit (Ta/Dpt: 3.8°C, RH: 20%, Wind: 5.0 m/s) with 12 far-field outer marine/plain boundary damping anchors.",
             "Thermodynamic bounds enforced (RH in [5, 100]%, Wind >= 0, DewPoint <= AirTemperature).",
+            "Missing forecast/background values are excluded from the fit (no fabrication); affected pixels are published as no-data (NaN).",
+            "背景场为瓦片捕获时刻的单一有效时次（run/valid 时次解析自瓦片 URL 并记录于 tile_metadata_latest.json），48 小时各帧共享同一背景形态、仅残差场逐时演化；详见 docs/瓦片背景场时效与分辨率调查记录.md。",
             "Stefan-Boltzmann six-direction radiant energy balance for physical Tmrt evaluation.",
             "UTCI calculated strictly within valid bioclimatic bounds [-50°C, 50°C], 0.5-17 m/s draft."
         ],
         "audit_summary": {
             "test_points_count": len(test_pts),
             "total_test_evaluations": len(test_temp_errors),
-            "temperature_mae": round(overall_mae, 3),
-            "temperature_rmse": round(overall_rmse, 3),
-            "max_abs_error": round(max_err, 3)
+            "missing_test_evaluations": missing_test_evaluations,
+            "temperature_mae": round(overall_mae, 3) if overall_mae is not None else None,
+            "temperature_rmse": round(overall_rmse, 3) if overall_rmse is not None else None,
+            "max_abs_error": round(max_err, 3) if max_err is not None else None
         }
     }
     
     (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     
     # 11. Write quality report
+    if overall_mae is not None:
+        audit_md = f"""## 验后盲测精度审计 ({len(test_pts)} 个独立盲测点)
+- **总检验时空点次数**: {len(test_temp_errors)} 次（另有 {missing_test_evaluations} 次因观测缺测被剔除，不造数）
+- **平均绝对误差 (MAE)**: {overall_mae:.3f} °C
+- **均方根误差 (RMSE)**: {overall_rmse:.3f} °C
+- **最大绝对偏差**: {max_err:.3f} °C
+- **平差状态**: 验后残差收敛（口径：相对同一供应商预报值的插值自洽性，非实测精度）。
+"""
+    else:
+        audit_md = f"""## 验后盲测精度审计 ({len(test_pts)} 个独立盲测点)
+- 本轮无有效盲测样本：观测缺测一律剔除（不造数），未产生可统计误差。
+"""
     report_md = f"""# 上海市全域 1000m 天气与 UTCI 空间平差发布报告
 
 - **发布标识 (run_id)**: `{run_id}`
@@ -601,13 +764,7 @@ def publish_48h_urban_adjustment_release(force_refresh: bool = False) -> dict:
 - **预报时段**: 48 小时逐小时连续场 ({iso_times[0]} 至 {iso_times[-1]})
 - **包含要素**: 通用热气候指数 (UTCI)、气温、相对湿度、风速、露点、太阳下行辐射
 
-## 验后盲测精度审计 ({len(test_pts)} 个独立盲测点)
-- **总检验时空点次数**: {len(test_temp_errors)} 次
-- **平均绝对误差 (MAE)**: {overall_mae:.3f} °C
-- **均方根误差 (RMSE)**: {overall_rmse:.3f} °C
-- **最大绝对偏差**: {max_err:.3f} °C
-- **平差状态**: 验后残差严格收敛于系统测量噪声水平以内，无空间阶梯突变与牛眼畸变。
-"""
+{audit_md}"""
     (output_dir / "quality_report.md").write_text(report_md, encoding="utf-8")
 
     # 12. Atomic update of latest.json
@@ -615,6 +772,9 @@ def publish_48h_urban_adjustment_release(force_refresh: bool = False) -> dict:
     latest_tmp.write_text(json.dumps({"run_id": run_id}, indent=2), encoding="utf-8")
     os.replace(latest_tmp, root / "latest.json")
     
-    logger.info("Successfully published 500m urban adjustment release: %s (MAE=%.3f°C)", run_id, overall_mae)
+    if overall_mae is not None:
+        logger.info("Successfully published 500m urban adjustment release: %s (MAE=%.3f°C)", run_id, overall_mae)
+    else:
+        logger.info("Successfully published 500m urban adjustment release: %s (no valid blind-test samples)", run_id)
     return manifest
 

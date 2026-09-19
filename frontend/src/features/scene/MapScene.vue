@@ -27,10 +27,18 @@ async function mount() {
     (window as any).__cesiumViewer = (next as any).viewer;
     adapter.setRecords(store.records);
     store.bindRenderer((view, variable) => next.prepare(view, variable));
+    syncHeatRisk();
   } catch (error) { if (ticket === generation) failed.value = error instanceof Error ? error.message : '无法启动三维地图'; }
   finally { if (ticket === generation) { loading.value = false; emit('ready'); } }
 }
+function syncHeatRisk() {
+  adapter?.applyHeatRisk(
+    { enabled: store.heatRisk.enabled, phase: store.heatRisk.phase, style: store.heatRisk.style },
+    store.heatRiskDataset,
+  );
+}
 watch(() => store.records, records => adapter?.setRecords(records));
+watch(() => [store.heatRisk.enabled, store.heatRisk.phase, store.heatRisk.style, store.heatRiskDataset], syncHeatRisk);
 watch(() => store.selection, selection => { if (selection) adapter?.select(selection.coordinates); });
 watch([container, () => store.scene], () => void mount(), { flush: 'post' });
 onBeforeUnmount(() => { generation++; adapter?.destroy(); store.bindRenderer(null); });
@@ -39,6 +47,7 @@ defineExpose({
   focus: (point: Coordinates) => adapter?.focus(point), showLayer: (id: string, visible: boolean) => adapter?.showLayer(id, visible),
   opacity: (value: number) => adapter?.setOpacity(value), canopyOpacity: (value: number) => adapter?.setCanopyOpacity(value),
   buildingOpacity: (value: number) => adapter?.setBuildingOpacity(value),
+  presentation: (mode: 'analysis' | 'context') => adapter?.setPresentation(mode),
   draft: (point: Coordinates, coarse: boolean) => adapter?.select(point, true, coarse), clearDraft: () => adapter?.clearDraft(),
   capture: async () => { if (!adapter || failed.value) throw new Error('地图尚未就绪，无法导出。'); return adapter.capture(); },
 });

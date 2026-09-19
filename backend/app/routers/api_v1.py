@@ -9,6 +9,8 @@ from app.routers.scenes import router as scenes_router
 from app.routers.tasks import router as tasks_router
 from app.routers.spatial import router as spatial_router
 from app.routers.forecast import router as forecast_router
+from app.routers.heat_perception import router as heat_perception_router
+from app.routers.weather import router as weather_router
 
 api_v1_router = APIRouter()
 
@@ -20,3 +22,5 @@ api_v1_router.include_router(tasks_router)
 api_v1_router.include_router(exports_router)
 api_v1_router.include_router(spatial_router)
 api_v1_router.include_router(forecast_router)
+api_v1_router.include_router(heat_perception_router)
+api_v1_router.include_router(weather_router)

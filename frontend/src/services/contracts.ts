@@ -45,6 +45,7 @@ export interface CheckIn extends CheckInBody {
   match_status: 'pending' | 'matched' | 'unmatched' | 'failed'; publication_status: string;
 }
 export type PublicCheckIn = Pick<CheckIn, 'check_in_id' | 'alias' | 'location' | 'experienced_at' | 'thermal_sensation' | 'thermal_comfort' | 'setting' | 'activity' | 'sun_exposure' | 'note' | 'public_location_precision'>;
+export interface ReportReceipt { report_id: string; check_in_id: string; status: 'pending'; created_at: string }
 export interface Session { authenticated: boolean; user: { user_id: string; alias: string } | null; csrf_token?: string }
 export interface Status { release_ids: string[]; freshness: 'fresh' | 'stale' | 'unknown'; update_state: string }
 export interface ExportResult { export_id: string; task_id: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; expires_at?: string; download_url?: string }
@@ -119,4 +120,214 @@ export interface ForecastGridResult {
     lats: number[];
     values: number[][];
   };
+}
+
+/** 后端 /forecast/24h/summary 的 hourly_details 逐时行（字段名与 OpenAPI 一致） */
+export interface HourlyPerceptionDetail {
+  time: string;
+  hour: number;
+  temperature_c: number;
+  humidity_pct: number;
+  wind_speed_ms: number;
+  radiation_wm2: number;
+  utci_c: number;
+  stress_desc: string;
+  p_hot_inland: number;
+  p_hot_waterfront: number;
+  cooling_benefit_pct: number;
+  /** extreme | high | moderate | low */
+  risk_level: string;
+}
+
+export interface Forecast24hSummary {
+  status: string;
+  generated_at: string;
+  real_forecast_source: string;
+  real_ugc_sample_size: number;
+  ugc_validation_metrics: {
+    sample_count: number;
+    m0_auc: number;
+    m0_brier: number;
+    m1_auc: number;
+    m1_brier: number;
+    optimal_threshold: number;
+    accuracy_optimal: number;
+    f1_score_optimal: number;
+    precision_optimal: number;
+    recall_optimal: number;
+    nominal_threshold_0_5: { accuracy: number };
+  };
+  forecast_24h_overview: {
+    peak_time_bjt: string;
+    peak_temperature_c: number;
+    peak_utci_c: number;
+    peak_stress_desc: string;
+    peak_p_hot_inland: number;
+    peak_p_hot_waterfront: number;
+    max_cooling_benefit_pct: number;
+    mean_cooling_benefit_pct: number;
+    continuous_heat_hours?: number[];
+  };
+  hourly_details: HourlyPerceptionDetail[];
+}
+
+export interface ExtremeHotspotItem {
+  rank: number;
+  grid_id: string;
+  district_name: string;
+  lon: number;
+  lat: number;
+  utci_c: number;
+  p_enhanced: number;
+  p_base: number;
+  delta_p: number;
+  green_fraction: number;
+  water_fraction: number;
+  building_fraction: number;
+}
+
+export interface ExtremeRegionsResponse {
+  lead_hour: number;
+  top_extreme_hotspots: ExtremeHotspotItem[];
+  total_identified_hotspots?: number;
+}
+
+export interface ShelterLocation {
+  name: string;
+  capacity: number;
+  radius_m: number;
+}
+
+/** 键为行业标识（后端下发英文 key，演示数据可能直接用中文行业名） */
+export interface SectorGuideline {
+  action?: string;
+  instructions?: string[];
+  locations?: ShelterLocation[];
+}
+
+export interface DecisionSupportResponse {
+  valid_period: string;
+  max_utci_c: number;
+  overall_risk_level: string;
+  active_alerts: Array<{
+    level: string;
+    title: string;
+    trigger_period: string;
+    message: string;
+  }>;
+  sector_guidelines: Record<string, SectorGuideline>;
+}
+
+export interface ModelCoefficientRow {
+  variable: string;
+  coefficient: number;
+  odds_ratio: number;
+  ci95_lower: number;
+  ci95_upper: number;
+  unit_change: string;
+  interpretation: string;
+}
+
+export interface ModelEvaluationResponse {
+  model_version: string;
+  training_sample_size: number;
+  test_sample_size: number;
+  sampling_strategy: string;
+  pooled_spatial_m1_auc: number;
+  test_2024_m1_auc: number;
+  test_2024_pure_extrap_m1_auc: number;
+  environmental_effects: ModelCoefficientRow[];
+  metrics_table: Array<{
+    model: string;
+    split_type: string;
+    auc_roc: number;
+    brier_score: number;
+    log_loss: number;
+  }>;
+  coefficients_table: ModelCoefficientRow[];
+  calibration_table?: Array<{
+    model: string;
+    decile_bin: number;
+    sample_count: number;
+    unit_weight_sum: number;
+    predicted_probability: number;
+    observed_hot_fraction: number;
+  }>;
+}
+
+export interface CustomInversionRequest {
+  air_temperature_c: number;
+  relative_humidity_pct: number;
+  wind_speed_10m_ms: number;
+  net_solar_radiation_wm2: number;
+  green_fraction: number;
+  water_fraction: number;
+  building_fraction: number;
+}
+
+export interface CustomInversionResult {
+  calculated_utci_c: number;
+  utci_stress_level: string;
+  p_hot_base: number;
+  p_hot_enhanced: number;
+  delta_p: number;
+  environmental_mitigation_pct: number;
+  risk_level: string;
+}
+
+/* ---------- Landing card: real point weather & warnings ---------- */
+
+export interface UtciStressCategory { zh: string; en: string; color: string }
+
+export interface WeatherReading {
+  /** 位置当地墙上时间（ISO 字符串，仅用于展示，不含时区偏移） */
+  time: string;
+  air_temperature_c: number;
+  relative_humidity_pct: number;
+  wind_speed_ms: number;
+  shortwave_radiation_wm2: number;
+  tmrt_c: number;
+  utci_c: number;
+  utci_shade_c: number;
+  stress: UtciStressCategory;
+}
+
+export interface WeatherPoint {
+  location: { longitude: number; latitude: number; grid_rounded: boolean };
+  timezone: string | null;
+  utc_offset_seconds: number | null;
+  source: { provider: string; utci_model: string; fetched_at: string };
+  now_index: number;
+  current: WeatherReading;
+  hourly: WeatherReading[];
+  peak: { utci_c: number; time: string } | null;
+}
+
+export interface WeatherAlert {
+  title: string;
+  type_name: string;
+  level: string;
+  severity_color: string;
+  text: string;
+  pub_time: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  status: string;
+}
+
+export interface WeatherAlerts {
+  available: boolean;
+  reason_code: 'not_configured' | 'provider_error' | 'quota_exhausted' | null;
+  update_time: string | null;
+  source: string;
+  fetched_at: string;
+  alerts: WeatherAlert[];
+}
+
+
+/** UtciCard 加载完成后向兄弟卡片广播的实时读数（风险推导同源，避免二次计算）。 */
+export interface UtciReading {
+  utciC: number;
+  stressZh: string;
+  stressColor: string;
 }

@@ -1,4 +1,4 @@
-import type { Catalog, CheckIn, CheckInBody, Coordinates, EnvironmentView, ExportResult, FeatureDetail, ForecastGridResult, ForecastPoint, ForecastQuota, Layer, Page, Place, PointResult, PublicCheckIn, Scene, SeriesResult, Session, Status, TimeSelection, Variable } from './contracts';
+import type { Catalog, CheckIn, CheckInBody, Coordinates, CustomInversionRequest, CustomInversionResult, DecisionSupportResponse, EnvironmentView, ExportResult, ExtremeRegionsResponse, FeatureDetail, Forecast24hSummary, ForecastGridResult, ForecastPoint, ForecastQuota, Layer, ModelEvaluationResponse, Page, Place, PointResult, PublicCheckIn, ReportReceipt, Scene, SeriesResult, Session, Status, TimeSelection, Variable, WeatherAlerts, WeatherPoint } from './contracts';
 import { normalizeBackendResponse } from './backend-adapter';
 
 export const isDemo = (new URLSearchParams(location.search).get('mode') || import.meta.env.VITE_DATA_MODE || 'demo') === 'demo';
@@ -19,18 +19,26 @@ export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : '暂时无法完成，请稍后重试。';
 }
 export function aborted(error: unknown) { return error instanceof DOMException && error.name === 'AbortError'; }
-export async function request<T>(path: string, options: RequestInit = {}, conditional = false): Promise<T> {
+export interface RequestOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
+export async function request<T>(path: string, options: RequestOptions = {}, conditional = false): Promise<T> {
   const headers = new Headers(options.headers);
   if (options.body) headers.set('Content-Type', 'application/json');
   if (csrfToken && options.method && options.method !== 'GET') headers.set('X-CSRF-Token', csrfToken);
   if (conditional && etags.has(path)) headers.set('If-None-Match', etags.get(path)!.etag);
-  const timeout = AbortSignal.timeout(20000);
+  const timeoutDuration = options.timeoutMs ?? 20000;
+  const timeout = AbortSignal.timeout(timeoutDuration);
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   const init = { ...options, headers, signal, credentials: 'same-origin' as const, cache: 'no-store' as const };
   let response: Response;
   try {
     response = isDemo ? await (await import('./demo')).demoFetch(path, init) : await fetch(base + path, init);
   } catch (error) {
+    if (timeout.aborted && !options.signal?.aborted) {
+      throw new Error(`请求超时（超过 ${Math.round(timeoutDuration / 1000)} 秒），请检查网络连接后重试。`);
+    }
     if (aborted(error)) throw error;
     throw new Error('服务暂不可达，请检查连接后重试。');
   }
@@ -71,10 +79,11 @@ export const api = {
     return request<Page<PublicCheckIn>>(`/check-ins?${query(isDemo ? params : { ...rest, start_time: start, end_time: end })}`, { signal });
   },
   aggregates: (params: Record<string, string | number>, signal?: AbortSignal) => request<Page<{ location: { coordinates: Coordinates }; count: number }>>(`/check-ins/aggregates?${query(params)}`, { signal }),
-  myRecords: (cursor?: string) => request<Page<CheckIn>>(`/me/check-ins?${query({ cursor, limit: 50 })}`),
+  myRecords: (cursor?: string) => request<Page<CheckIn>>(`/me/check-ins?${query({ offset: Number(cursor) > 0 ? Number(cursor) : 0, limit: 50 })}`),
   create: (body: CheckInBody, key: string) => request<CheckIn>('/check-ins', write('POST', body, { 'Idempotency-Key': key })),
   edit: (id: string, body: CheckInBody, revision: string) => request<CheckIn>(`/check-ins/${encodeURIComponent(id)}`, write('PATCH', body, { 'If-Match': revision })),
   remove: (id: string, revision: string) => request<void>(`/check-ins/${encodeURIComponent(id)}`, write('DELETE', undefined, { 'If-Match': revision })),
+  report: (id: string, reason: string, key: string) => request<ReportReceipt>(`/check-ins/${encodeURIComponent(id)}/reports`, write('POST', { reason }, { 'Idempotency-Key': key })),
   session: () => request<Session>('/auth/session'),
   login: (username: string, password: string) => request<Session>('/auth/login', write('POST', { username, password })),
   logout: async () => { await request<void>('/auth/logout', write('POST')); csrfToken = ''; },
@@ -85,5 +94,15 @@ export const api = {
   forecastPoints: () => request<{ total_points: number; points: ForecastPoint[] }>('/forecast/points'),
   forecastGrid: (hour = 0, variable = 'temperature_2m', smooth = 0.08) => request<ForecastGridResult>(`/forecast/grid?${query({ hour, variable, smooth })}`),
   forecastAudit: (hour = 0, variable = 'temperature_2m') => request<{ audit_metrics: ForecastGridResult['audit_metrics']; control_points_summary: ForecastGridResult['control_points_summary'] }>(`/forecast/audit?${query({ hour, variable })}`),
-  forecastSync: (force = false) => request<{ success: boolean; date: string; success_points: number }>('/forecast/sync?' + query({ force: String(force) }), write('POST')),
+  forecastSync: (force = false) => request<{ success: boolean; date: string; success_points: number }>('/forecast/sync?' + query({ force: String(force) }), { ...write('POST'), timeoutMs: 120000 }),
+  forecast24hSummary: (signal?: AbortSignal) => request<Forecast24hSummary>('/forecast/24h/summary', { signal }),
+  forecast24hGrid: (leadHour = 5, signal?: AbortSignal) => request<any>(`/forecast/24h/grid?${query({ lead_hour: leadHour })}`, { signal }),
+  forecast24hMultitemporal: (signal?: AbortSignal) => request<any>('/forecast/24h/multitemporal', { signal }),
+  forecast24hExtremeRegions: (leadHour = 5, signal?: AbortSignal) => request<ExtremeRegionsResponse>(`/forecast/24h/extreme_regions?${query({ lead_hour: leadHour })}`, { signal }),
+  forecast24hDecision: (signal?: AbortSignal) => request<DecisionSupportResponse>('/forecast/24h/decision', { signal }),
+  modelsEvaluation: (signal?: AbortSignal) => request<ModelEvaluationResponse>('/models/evaluation', { signal }),
+  customInversion: (body: CustomInversionRequest, signal?: AbortSignal) => request<CustomInversionResult>('/forecast/custom_inversion', { ...write('POST', body), signal }),
+  weatherPoint: (longitude: number, latitude: number, signal?: AbortSignal) => request<WeatherPoint>(`/weather/point?${query({ longitude, latitude })}`, { signal, timeoutMs: 25000 }),
+  weatherAlerts: (longitude: number, latitude: number, signal?: AbortSignal) => request<WeatherAlerts>(`/weather/alerts?${query({ longitude, latitude })}`, { signal, timeoutMs: 15000 }),
+  mapImageUrl: (mapName: string) => isDemo ? `/maps/${mapName}` : `${base}/forecast/24h/maps/${encodeURIComponent(mapName)}`,
 };

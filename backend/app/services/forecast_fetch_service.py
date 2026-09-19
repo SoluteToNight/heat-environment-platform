@@ -1,8 +1,10 @@
-"""Hourly Weather Forecast Fetch Service for Shanghai 100 Control & Test Points.
+"""Hourly Weather Forecast Fetch Service for Shanghai Audit Points.
 
 Fetches rolling 48-hour hourly weather forecasts (temperature, humidity, wind, dew point)
-for 90 Control Points + 10 Independent Test Points, with built-in daily caching,
-rate limiting, and strict quota guard protection.
+for 126 Control Points + 18 Independent Test Points (144 total, see
+``shanghai_audit_points_100.json``), with built-in daily caching, rate limiting, and
+strict quota guard protection. Quota accounting counts every issued HTTP request
+(including failures and retries), since the provider bills per request.
 """
 
 import json
@@ -11,6 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.config import settings
 from app.services.forecast_quota_manager import (
     can_consume,
@@ -57,6 +61,27 @@ def get_latest_forecast() -> dict | None:
     return None
 
 
+def _fetch_single_point(pt: dict, client: QWeatherClient, http_client: httpx.Client | None = None) -> tuple[dict, dict | None, int]:
+    """Fetch 48h forecast for a single point with retry and attempts tracking."""
+    pt_id = pt["id"]
+    lat = pt["lat"]
+    lon = pt["lon"]
+    hourly_data = None
+    attempts = 0
+
+    for attempt in range(2):
+        attempts += 1
+        try:
+            res = client.fetch_hourly(latitude=lat, longitude=lon, http_client=http_client)
+            hourly_data = res.get("hourly")
+            break
+        except Exception as exc:
+            logger.warning("Point %s (Attempt %d) failed: %s", pt_id, attempt + 1, exc)
+            time.sleep(0.2)
+
+    return pt, hourly_data, attempts
+
+
 def fetch_and_cache_daily_forecast(force_refresh: bool = False) -> dict:
     """Fetch 48h hourly forecast for all 100 points and cache to disk.
     
@@ -85,58 +110,65 @@ def fetch_and_cache_daily_forecast(force_refresh: bool = False) -> dict:
 
     logger.info("Initiating daily forecast fetch for %d points (Today: %s)", total_pts, today_str)
     client = QWeatherClient(settings)
+    try:
+        client.token()
+    except Exception as exc:
+        logger.warning("Pre-warming QWeather JWT token failed: %s", exc)
+
     points_data = {}
     success_count = 0
     fail_count = 0
+    attempt_count = 0
 
-    for idx, pt in enumerate(points, 1):
-        pt_id = pt["id"]
-        lat = pt["lat"]
-        lon = pt["lon"]
-        hourly_data = None
+    max_workers = min(6, total_pts)
+    logger.info("Using ThreadPoolExecutor with %d workers and pooled HTTP keep-alive to fetch %d points", max_workers, total_pts)
+    with httpx.Client(
+        timeout=settings.WEATHER_REQUEST_TIMEOUT_SECONDS,
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        follow_redirects=False,
+    ) as http_client:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_fetch_single_point, pt, client, http_client): pt for pt in points}
+            for future in as_completed(futures):
+                pt, hourly_data, attempts = future.result()
+                attempt_count += attempts
+                pt_id = pt["id"]
+                if hourly_data:
+                    points_data[pt_id] = {
+                        "id": pt_id,
+                        "name": pt["name"],
+                        "district": pt["district"],
+                        "type": pt["type"],
+                        "lon": pt["lon"],
+                        "lat": pt["lat"],
+                        "tag": pt.get("tag", ""),
+                        "hourly": hourly_data
+                    }
+                    success_count += 1
+                else:
+                    logger.error("Failed to fetch forecast for point %s (%s)", pt_id, pt["name"])
+                    fail_count += 1
 
-        # Retry up to 2 attempts for resilience
-        for attempt in range(2):
-            try:
-                res = client.fetch_hourly(latitude=lat, longitude=lon)
-                hourly_data = res.get("hourly")
-                break
-            except Exception as exc:
-                logger.warning("Point %s (Attempt %d) failed: %s", pt_id, attempt + 1, exc)
-                time.sleep(0.3)
+    # Preserve stable order matching shanghai_audit_points_100.json
+    ordered_points_data = {pt["id"]: points_data[pt["id"]] for pt in points if pt["id"] in points_data}
 
-        if hourly_data:
-            points_data[pt_id] = {
-                "id": pt_id,
-                "name": pt["name"],
-                "district": pt["district"],
-                "type": pt["type"],
-                "lon": lon,
-                "lat": lat,
-                "tag": pt.get("tag", ""),
-                "hourly": hourly_data
-            }
-            success_count += 1
-        else:
-            logger.error("Failed to fetch forecast for point %s (%s)", pt_id, pt["name"])
-            fail_count += 1
-
-        # Rate-limiting pause between requests (50ms)
-        time.sleep(0.05)
+    # Record quota FIRST (including all failed attempts — the provider bills per
+    # request, and failed fetches must not silently escape the hard-cutoff guard),
+    # then raise if the whole batch failed.
+    record_consumption(
+        count=attempt_count,
+        purpose=f"Daily audit-point 48h forecast sync ({today_str})",
+        metadata={
+            "date": today_str,
+            "total_points": total_pts,
+            "success_count": success_count,
+            "fail_count": fail_count,
+            "attempt_count": attempt_count
+        }
+    )
 
     if success_count == 0:
         raise RuntimeError("All point forecast fetches failed. Check network or credentials.")
-
-    # Record API consumption
-    record_consumption(
-        count=success_count,
-        purpose=f"Daily 100-point 48h forecast sync ({today_str})",
-        metadata={
-            "date": today_str,
-            "success_count": success_count,
-            "fail_count": fail_count
-        }
-    )
 
     result_payload = {
         "fetch_time": datetime.now(timezone.utc).isoformat(),
@@ -144,9 +176,10 @@ def fetch_and_cache_daily_forecast(force_refresh: bool = False) -> dict:
         "total_points": total_pts,
         "success_count": success_count,
         "fail_count": fail_count,
+        "attempt_count": attempt_count,
         "control_points_count": sum(1 for p in points if p["type"] == "control"),
         "test_points_count": sum(1 for p in points if p["type"] == "test"),
-        "points_data": points_data
+        "points_data": ordered_points_data
     }
 
     # Save to date-specific file

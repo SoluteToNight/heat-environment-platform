@@ -151,7 +151,7 @@ describe('environment workspace lifecycle', () => {
     vi.useFakeTimers();
     const store = useWorkspace();
     await store.initialize();
-    await store.switchView({ kind: 'at', time: demoProducts[0]!.times[0]! });
+    await store.switchView({ kind: 'at', time: store.times[0]! });
     expect(store.playing).toBe(false);
 
     vi.mocked(api.view).mockImplementation(async (_s, _v, sel) => {
@@ -164,11 +164,11 @@ describe('environment workspace lifecycle', () => {
 
     // Initial immediate tick advances to times[1]
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.timeSelection).toEqual({ kind: 'at', time: demoProducts[0]!.times[1]! });
+    expect(store.timeSelection).toEqual({ kind: 'at', time: store.times[1]! });
 
     // Next timer tick advances to times[2]
-    await vi.advanceTimersByTimeAsync(1500);
-    expect(store.timeSelection).toEqual({ kind: 'at', time: demoProducts[0]!.times[2]! });
+    await vi.advanceTimersByTimeAsync(650);
+    expect(store.timeSelection).toEqual({ kind: 'at', time: store.times[2]! });
 
     store.stop();
     expect(store.playing).toBe(false);
@@ -179,8 +179,8 @@ describe('environment workspace lifecycle', () => {
     vi.useFakeTimers();
     const store = useWorkspace();
     await store.initialize();
-    const lastIndex = demoProducts[0]!.times.length - 1;
-    await store.switchView({ kind: 'at', time: demoProducts[0]!.times[lastIndex]! });
+    const lastIndex = store.times.length - 1;
+    await store.switchView({ kind: 'at', time: store.times[lastIndex]! });
 
     vi.mocked(api.view).mockImplementation(async (_s, _v, sel) => {
       const t = sel.kind === 'at' ? sel.time : 'now';
@@ -192,7 +192,7 @@ describe('environment workspace lifecycle', () => {
 
     // Should wrap around to times[0]
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.timeSelection).toEqual({ kind: 'at', time: demoProducts[0]!.times[0]! });
+    expect(store.timeSelection).toEqual({ kind: 'at', time: store.times[0]! });
 
     store.stop();
     vi.useRealTimers();
